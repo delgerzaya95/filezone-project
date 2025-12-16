@@ -1,0 +1,67 @@
+/* assets/css/style.css */
+
+/* Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+/* Basic Setup */
+body { 
+    background-color: #f8fafc; 
+    font-family: 'Inter', sans-serif;
+}
+
+/* Scrollbar нуух (Sidebar-д зориулсан) */
+.no-scrollbar::-webkit-scrollbar { 
+    display: none; 
+}
+.no-scrollbar {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+}
+
+/* Товчлуурын гялбаа эффект */
+.btn-shine {
+    position: relative;
+    overflow: hidden;
+}
+.btn-shine::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+    transition: 0.5s;
+}
+.btn-shine:hover::after {
+    left: 100%;
+}
+
+/* Auth Pages (Login, Register) Pattern */
+.bg-pattern {
+    background-image: radial-gradient(#e2e8f0 1px, transparent 1px);
+    background-size: 20px 20px;
+}
+
+/* Upload Zone Active State (Файл чирж авчрах үед) */
+.drag-active {
+    border-color: #3b82f6 !important; /* brand-500 */
+    background-color: #eff6ff !important; /* brand-50 */
+}
+
+/* Service Card Hover Effect */
+.service-card .service-action {
+    transform: translateY(10px);
+    opacity: 0;
+    transition: all 0.3s ease-in-out;
+}
+.service-card:hover .service-action {
+    transform: translateY(0);
+    opacity: 1;
+}
+
+/* Profile Tabs */
+.tab-active {
+    border-bottom-color: #2563eb; /* brand-600 */
+    color: #2563eb;
+}
