@@ -1,3 +1,97 @@
+<?php
+// 1. Database болон Google тохиргоог дуудах
+require_once 'includes/db.php';
+
+// Google Login тохиргоо (Хэрэв байгаа бол)
+$google_login_active = false;
+if (file_exists('vendor/autoload.php') && file_exists('includes/google_config.php')) {
+    try {
+        require_once 'includes/google_config.php';
+        if (isset($google_client)) {
+            $google_login_active = true;
+        }
+    } catch (Throwable $e) {
+        error_log("Google Config Error: " . $e->getMessage());
+    }
+}
+
+// Хэрэв хэрэглэгч аль хэдийн нэвтэрсэн бол
+if (isLoggedIn()) {
+    header('Location: profile.php');
+    exit;
+}
+
+$error = '';
+$success = '';
+
+// -------------------------------------------------------------------------
+// REGISTRATION HANDLER
+// -------------------------------------------------------------------------
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Input-үүдийг авах
+    $username = trim($_POST['username']);
+    $email = trim($_POST['email']);
+    $password = $_POST['password'];
+    $confirm_password = $_POST['confirm_password'];
+    $terms = isset($_POST['terms']);
+
+    // 1. Баталгаажуулалт
+    if (empty($username) || empty($email) || empty($password)) {
+        $error = "Бүх талбарыг бөглөнө үү.";
+    } elseif (!$terms) {
+        $error = "Та үйлчилгээний нөхцөлийг зөвшөөрөх ёстой.";
+    } elseif ($password !== $confirm_password) {
+        $error = "Нууц үг таарахгүй байна.";
+    } elseif (strlen($password) < 6) {
+        $error = "Нууц үг доод тал нь 6 оронтой байх ёстой.";
+    } else {
+        // 2. Давхардал шалгах
+        $stmt = $pdo->prepare("SELECT id FROM users WHERE email = :email OR username = :username");
+        $stmt->execute([':email' => $email, ':username' => $username]);
+        
+        if ($stmt->rowCount() > 0) {
+            $error = "Энэ имэйл эсвэл хэрэглэгчийн нэр бүртгэлтэй байна.";
+        } else {
+            // 3. Бүртгэх
+            try {
+                $hashed_password = password_hash($password, PASSWORD_DEFAULT);
+                $avatar_url = 'assets/images/default-avatar.png'; // Default avatar
+
+                $insert = $pdo->prepare("
+                    INSERT INTO users (username, email, password, role, is_verified, avatar_url, join_date, last_active) 
+                    VALUES (:username, :email, :password, 'user', 0, :avatar, NOW(), NOW())
+                ");
+                
+                $result = $insert->execute([
+                    ':username' => $username,
+                    ':email' => $email,
+                    ':password' => $hashed_password,
+                    ':avatar' => $avatar_url
+                ]);
+
+                if ($result) {
+                    // Амжилттай бол шууд нэвтрүүлэх
+                    $newUserId = $pdo->lastInsertId();
+                    
+                    $_SESSION['user_id'] = $newUserId;
+                    $_SESSION['username'] = $username;
+                    $_SESSION['email'] = $email;
+                    $_SESSION['role'] = 'user';
+                    $_SESSION['avatar'] = $avatar_url;
+
+                    // Профайл руу шилжүүлэх
+                    header('Location: profile.php');
+                    exit;
+                } else {
+                    $error = "Бүртгэл үүсгэхэд алдаа гарлаа.";
+                }
+            } catch (PDOException $e) {
+                $error = "Системийн алдаа: " . $e->getMessage();
+            }
+        }
+    }
+}
+?>
 <!DOCTYPE html>
 <html lang="mn">
 <head>
@@ -56,8 +150,16 @@
                     <p class="text-sm text-gray-500">Filezone-д нэгдэж, файл татаж, зарж эхлээрэй.</p>
                 </div>
 
+                <!-- Error Message -->
+                <?php if (!empty($error)): ?>
+                    <div class="bg-red-50 border border-red-200 text-red-600 text-sm rounded-lg p-3 mb-4 flex items-center gap-2 animate-pulse">
+                        <i class="fas fa-exclamation-circle"></i>
+                        <span><?php echo $error; ?></span>
+                    </div>
+                <?php endif; ?>
+
                 <!-- Register Form -->
-                <form action="register_process.php" method="POST" class="space-y-4">
+                <form action="register.php" method="POST" class="space-y-4">
                     
                     <!-- Username Input -->
                     <div>
@@ -67,7 +169,8 @@
                                 <i class="fas fa-user text-sm"></i>
                             </span>
                             <input type="text" id="username" name="username" required placeholder="User123" 
-                                class="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:bg-white transition-all">
+                                class="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:bg-white transition-all"
+                                value="<?php echo isset($_POST['username']) ? htmlspecialchars($_POST['username']) : ''; ?>">
                         </div>
                     </div>
 
@@ -79,7 +182,8 @@
                                 <i class="fas fa-envelope text-sm"></i>
                             </span>
                             <input type="email" id="email" name="email" required placeholder="name@example.com" 
-                                class="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:bg-white transition-all">
+                                class="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:bg-white transition-all"
+                                value="<?php echo isset($_POST['email']) ? htmlspecialchars($_POST['email']) : ''; ?>">
                         </div>
                     </div>
 
@@ -135,10 +239,17 @@
 
                 <!-- Google Signup -->
                 <div class="mb-6">
-                    <button class="w-full flex items-center justify-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium text-gray-700">
-                        <img src="https://www.svgrepo.com/show/475656/google-color.svg" class="w-4 h-4" alt="Google">
-                        Google-ээр бүртгүүлэх
-                    </button>
+                    <?php if($google_login_active && isset($google_client)): ?>
+                        <a href="<?php echo $google_client->createAuthUrl(); ?>" class="w-full flex items-center justify-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium text-gray-700">
+                            <img src="https://www.svgrepo.com/show/475656/google-color.svg" class="w-4 h-4" alt="Google">
+                            Google-ээр бүртгүүлэх
+                        </a>
+                    <?php else: ?>
+                        <button class="w-full flex items-center justify-center gap-2 px-4 py-2 bg-gray-100 border border-gray-200 rounded-lg text-sm font-medium text-gray-400 cursor-not-allowed">
+                            <img src="https://www.svgrepo.com/show/475656/google-color.svg" class="w-4 h-4 opacity-50" alt="Google">
+                            Google (Тохиргоо хийгдээгүй)
+                        </button>
+                    <?php endif; ?>
                 </div>
 
                 <!-- Login Link -->

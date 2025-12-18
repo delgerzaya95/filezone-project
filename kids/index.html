@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="mn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Filezone Kids - Хүүхдийн номын сан</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        primary: '#4F46E5', // Filezone үндсэн цэнхэр
+                        secondary: '#0EA5E9', // Sky Blue - Хүүхдэд ээлтэй цэнхэр
+                        dark: '#1F2937',
+                        light: '#F3F4F6'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background-color: #F8FAFC; }
+        /* Custom Scrollbar styled like main site */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        .sidebar-link {
+            transition: all 0.2s;
+        }
+        .sidebar-link:hover, .sidebar-link.active {
+            background-color: #F0F9FF; /* light sky blue */
+            color: #0284C7; /* sky-600 */
+            border-right: 3px solid #0284C7;
+        }
+        .sidebar-link i {
+            transition: color 0.2s;
+        }
+    </style>
+</head>
+<body class="font-sans text-gray-800 antialiased overflow-hidden">
+
+    <div class="flex h-screen bg-gray-50">
+        
+        <!-- SIDEBAR (Үндсэн сайттай ижил бүтэц) -->
+        <aside class="w-64 bg-white shadow-xl hidden md:flex flex-col z-20">
+            <!-- Logo Area -->
+            <div class="h-16 flex items-center px-6 border-b border-gray-100">
+                <a href="#" class="flex items-center gap-2">
+                    <div class="w-8 h-8 bg-sky-500 rounded-lg flex items-center justify-center text-white">
+                        <i class="fas fa-layer-group"></i>
+                    </div>
+                    <span class="text-xl font-bold text-gray-800 tracking-tight">Filezone <span class="text-sky-500">Kids</span></span>
+                </a>
+            </div>
+
+            <!-- Navigation Links -->
+            <div class="flex-1 overflow-y-auto py-4">
+                <nav class="space-y-1">
+                    <a href="#" class="sidebar-link active flex items-center px-6 py-3 text-gray-600 hover:text-sky-600 group">
+                        <i class="fas fa-home w-5 h-5 mr-3 text-gray-400 group-hover:text-sky-500"></i>
+                        <span class="font-medium">Нүүр хуудас</span>
+                    </a>
+                    
+                    <div class="px-6 pt-4 pb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                        Ангилал
+                    </div>
+
+                    <a href="#" onclick="filterBooks('fairytale')" class="sidebar-link flex items-center px-6 py-3 text-gray-600 group">
+                        <i class="fas fa-book-open w-5 h-5 mr-3 text-gray-400 group-hover:text-sky-500"></i>
+                        <span class="font-medium">Үлгэрүүд</span>
+                    </a>
+                    <a href="#" onclick="filterBooks('science')" class="sidebar-link flex items-center px-6 py-3 text-gray-600 group">
+                        <i class="fas fa-microscope w-5 h-5 mr-3 text-gray-400 group-hover:text-sky-500"></i>
+                        <span class="font-medium">Танин мэдэхүй</span>
+                    </a>
+                    <a href="#" onclick="filterBooks('comic')" class="sidebar-link flex items-center px-6 py-3 text-gray-600 group">
+                        <i class="fas fa-mask w-5 h-5 mr-3 text-gray-400 group-hover:text-sky-500"></i>
+                        <span class="font-medium">Комик номууд</span>
+                    </a>
+                    <a href="#" class="sidebar-link flex items-center px-6 py-3 text-gray-600 group">
+                        <i class="fas fa-video w-5 h-5 mr-3 text-gray-400 group-hover:text-sky-500"></i>
+                        <span class="font-medium">Видео хичээл</span>
+                    </a>
+                    <a href="#" class="sidebar-link flex items-center px-6 py-3 text-gray-600 group">
+                        <i class="fas fa-language w-5 h-5 mr-3 text-gray-400 group-hover:text-sky-500"></i>
+                        <span class="font-medium">Гадаад хэл</span>
+                    </a>
+                    
+                    <!-- Removed Auth Sections -->
+                </nav>
+            </div>
+
+            <!-- Sidebar Footer -->
+            <div class="p-4 border-t border-gray-100 bg-gray-50">
+                <a href="#" class="flex items-center gap-3 px-2">
+                    <div class="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center text-gray-500">
+                        <i class="fas fa-arrow-left"></i>
+                    </div>
+                    <div class="text-sm font-medium text-gray-600">Үндсэн сайт руу буцах</div>
+                </a>
+            </div>
+        </aside>
+
+        <!-- MAIN CONTENT WRAPPER -->
+        <div class="flex-1 flex flex-col overflow-hidden relative">
+            
+            <!-- HEADER (Top Bar - No Auth) -->
+            <header class="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-6 shadow-sm z-10">
+                <!-- Mobile Menu Button -->
+                <button class="md:hidden text-gray-500 hover:text-gray-700 focus:outline-none">
+                    <i class="fas fa-bars text-xl"></i>
+                </button>
+
+                <!-- Search Bar -->
+                <div class="flex-1 max-w-3xl ml-4 md:ml-0">
+                    <div class="relative">
+                        <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <i class="fas fa-search text-gray-400"></i>
+                        </span>
+                        <input type="text" id="headerSearch" class="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg leading-5 bg-gray-50 placeholder-gray-400 focus:outline-none focus:bg-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500 sm:text-sm transition duration-150 ease-in-out" placeholder="Хүүхдийн ном, үлгэр, комик хайх...">
+                    </div>
+                </div>
+
+                <!-- Right Side (Clean - No Auth) -->
+                <div class="flex items-center gap-3 ml-6">
+                    <span class="hidden md:block text-sm text-gray-400 italic">Бүртгэлгүй унших боломжтой</span>
+                </div>
+            </header>
+
+            <!-- MAIN SCROLLABLE AREA -->
+            <main class="flex-1 overflow-x-hidden overflow-y-auto bg-gray-50 p-6 md:p-8">
+                
+                <!-- Breadcrumb & Welcome -->
+                <div class="flex flex-col md:flex-row md:items-center justify-between mb-8">
+                    <div>
+                        <h1 class="text-2xl font-bold text-gray-800">Хүүхдийн номын сан</h1>
+                        <p class="text-sm text-gray-500 mt-1">Өнөөдөр ямар ном унших вэ?</p>
+                    </div>
+                    <div class="mt-4 md:mt-0">
+                        <button class="bg-sky-500 hover:bg-sky-600 text-white px-5 py-2.5 rounded-lg text-sm font-medium shadow-sm transition flex items-center gap-2">
+                            <i class="fas fa-magic"></i> Санамсаргүй ном
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Hero / Featured Banner (Changed Gradient) -->
+                <div class="rounded-2xl bg-gradient-to-r from-blue-500 to-sky-500 p-8 text-white shadow-lg mb-10 relative overflow-hidden">
+                    <div class="absolute right-0 bottom-0 opacity-10 transform translate-x-10 translate-y-10">
+                        <i class="fas fa-rocket text-9xl"></i>
+                    </div>
+                    <div class="relative z-10 max-w-xl">
+                        <span class="inline-block px-3 py-1 bg-white/20 rounded-full text-xs font-semibold mb-4 backdrop-blur-sm border border-white/10">Шинээр нэмэгдсэн</span>
+                        <h2 class="text-3xl font-bold mb-4">Бяцхан хунтайж: Тусгай хэвлэл</h2>
+                        <p class="text-blue-50 mb-6 text-sm md:text-base leading-relaxed">
+                            Дэлхийн сонгодог зохиолыг хүүхдүүддээ зориулан зурагт хувилбараар хүргэж байна. Яг одоо уншиж эхлээрэй.
+                        </p>
+                        <button class="bg-white text-blue-600 hover:bg-blue-50 font-bold py-2.5 px-6 rounded-lg shadow-md transition transform hover:-translate-y-0.5">
+                            Уншиж эхлэх
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Filters Toolbar -->
+                <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm mb-6 flex flex-wrap items-center justify-between gap-4">
+                    <div class="flex items-center gap-2 overflow-x-auto pb-2 md:pb-0 hide-scrollbar">
+                        <button onclick="filterBooks('all')" class="filter-btn active px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-800 hover:bg-gray-200 transition whitespace-nowrap">Бүгд</button>
+                        <button onclick="filterBooks('fairytale')" class="filter-btn px-4 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900 transition whitespace-nowrap">Үлгэр</button>
+                        <button onclick="filterBooks('science')" class="filter-btn px-4 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900 transition whitespace-nowrap">Танин мэдэхүй</button>
+                        <button onclick="filterBooks('comic')" class="filter-btn px-4 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900 transition whitespace-nowrap">Комик</button>
+                    </div>
+                    
+                    <div class="flex items-center gap-3">
+                        <span class="text-sm text-gray-500">Эрэмбэлэх:</span>
+                        <select class="border-gray-300 border text-sm rounded-lg focus:ring-sky-500 focus:border-sky-500 block p-2 bg-gray-50 text-gray-700">
+                            <option>Шинэ нь эхэндээ</option>
+                            <option>Их уншигдсан</option>
+                            <option>Үнэлгээгээр</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Books Grid (Modified for Landscape Cards) -->
+                <!-- Reduced grid-cols to max 4 because landscape cards need width -->
+                <div id="booksGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                    <!-- Books will be loaded here via JS -->
+                </div>
+
+                <!-- Loading Spinner -->
+                <div class="py-10 text-center hidden">
+                    <i class="fas fa-spinner fa-spin text-2xl text-sky-500"></i>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- JavaScript Logic -->
+    <script>
+        // Mock Data - PHP backend-тэй холбохдоо үүнийг орлоно
+        const books = [
+            {
+                id: 1,
+                title: "Мэлхий гүнж",
+                author: "Ардын үлгэр",
+                category: "fairytale",
+                cover: "https://images.unsplash.com/photo-1512820790803-83ca734da794?auto=format&fit=crop&w=600&h=338&q=80",
+                views: "1.2k",
+                rating: 4.8
+            },
+            {
+                id: 2,
+                title: "Нарны аймаг",
+                author: "Шинжлэх ухаан",
+                category: "science",
+                cover: "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=600&h=338&q=80",
+                views: "850",
+                rating: 4.5
+            },
+            {
+                id: 3,
+                title: "Ойн амьтад",
+                author: "Б. Болд",
+                category: "comic",
+                cover: "https://images.unsplash.com/photo-1557220008-db286f917242?auto=format&fit=crop&w=600&h=338&q=80",
+                views: "2.5k",
+                rating: 4.9
+            },
+            {
+                id: 4,
+                title: "Үнсгэлжин",
+                author: "Гримм",
+                category: "fairytale",
+                cover: "https://images.unsplash.com/photo-1532012197267-da84d127e765?auto=format&fit=crop&w=600&h=338&q=80",
+                views: "3.1k",
+                rating: 4.7
+            },
+            {
+                id: 5,
+                title: "Математик 1",
+                author: "Сурах бичиг",
+                category: "science",
+                cover: "https://images.unsplash.com/photo-1509228468518-180dd4864904?auto=format&fit=crop&w=600&h=338&q=80",
+                views: "500",
+                rating: 4.2
+            },
+            {
+                id: 6,
+                title: "Жунглийн ном",
+                author: "Киплинг",
+                category: "fairytale",
+                cover: "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=600&h=338&q=80",
+                views: "1.4k",
+                rating: 4.6
+            },
+             {
+                id: 7,
+                title: "Динозаврууд",
+                author: "Танин мэдэхүй",
+                category: "science",
+                cover: "https://images.unsplash.com/photo-1559869612-45e0394019bd?auto=format&fit=crop&w=600&h=338&q=80",
+                views: "2k",
+                rating: 4.8
+            }
+        ];
+
+        const grid = document.getElementById('booksGrid');
+
+        function renderBooks(data) {
+            grid.innerHTML = '';
+            
+            if (data.length === 0) {
+                grid.innerHTML = `
+                    <div class="col-span-full flex flex-col items-center justify-center py-12 text-gray-400">
+                        <i class="fas fa-search text-4xl mb-3"></i>
+                        <p>Илэрц олдсонгүй</p>
+                    </div>
+                `;
+                return;
+            }
+
+            data.forEach(book => {
+                // Changed card layout for landscape (aspect-video)
+                const cardHTML = `
+                    <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-lg transition-all duration-300 group flex flex-col">
+                        <!-- Landscape Image Container (aspect-video = 16:9) -->
+                        <div class="relative aspect-video overflow-hidden bg-gray-200">
+                            <img src="${book.cover}" alt="${book.title}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
+                            
+                            <!-- Hover Overlay with Action -->
+                            <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                <a href="Kids/read.php?book_id=${book.id}" class="bg-white text-gray-900 rounded-full w-12 h-12 flex items-center justify-center hover:bg-sky-500 hover:text-white transition shadow-lg transform hover:scale-110">
+                                    <i class="fas fa-play ml-1 text-lg"></i>
+                                </a>
+                            </div>
+
+                            <div class="absolute top-2 right-2 bg-black/50 backdrop-blur-sm text-white text-xs px-2 py-1 rounded flex items-center gap-1">
+                                <i class="fas fa-star text-yellow-400"></i> ${book.rating}
+                            </div>
+                        </div>
+                        
+                        <div class="p-4 flex-1 flex flex-col">
+                            <div class="text-xs text-sky-600 font-semibold mb-1 uppercase tracking-wide truncate">
+                                ${book.category === 'fairytale' ? 'Үлгэр' : book.category === 'science' ? 'Танин мэдэхүй' : 'Комик'}
+                            </div>
+                            <h3 class="font-bold text-gray-800 text-base leading-tight mb-1 truncate hover:text-sky-600 cursor-pointer" title="${book.title}">
+                                ${book.title}
+                            </h3>
+                            <p class="text-xs text-gray-500 mb-4 truncate">${book.author}</p>
+                            
+                            <div class="mt-auto flex items-center justify-between pt-3 border-t border-gray-50">
+                                <span class="text-xs text-gray-400 flex items-center gap-1">
+                                    <i class="far fa-eye"></i> ${book.views}
+                                </span>
+                                <button class="text-gray-400 hover:text-red-500 transition">
+                                    <i class="far fa-heart"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                grid.innerHTML += cardHTML;
+            });
+        }
+
+        // Filter Function
+        window.filterBooks = function(category) {
+            // Update active button styles
+            document.querySelectorAll('.filter-btn').forEach(btn => {
+                btn.classList.remove('active', 'bg-gray-100', 'text-gray-800');
+                btn.classList.add('text-gray-600');
+            });
+            event.target.classList.add('active', 'bg-gray-100', 'text-gray-800');
+            event.target.classList.remove('text-gray-600');
+
+            if (category === 'all') {
+                renderBooks(books);
+            } else {
+                const filtered = books.filter(book => book.category === category);
+                renderBooks(filtered);
+            }
+        };
+
+        // Simple Search
+        document.getElementById('headerSearch').addEventListener('input', (e) => {
+            const term = e.target.value.toLowerCase();
+            const filtered = books.filter(book => 
+                book.title.toLowerCase().includes(term) || 
+                book.author.toLowerCase().includes(term)
+            );
+            renderBooks(filtered);
+        });
+
+        // Initial Load
+        renderBooks(books);
+    </script>
+</body>
+</html>
