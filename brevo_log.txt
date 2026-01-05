@@ -1,0 +1,44 @@
+DT: 2025-12-26 00:19:20
+To: info@filezone.mn
+HTTP Code: 201
+Response: {"messageId":"<202512251619.29354435414@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+DT: 2025-12-26 00:20:17
+To: info@filezone.mn
+HTTP Code: 201
+Response: {"messageId":"<202512251620.78720745032@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+DT: 2025-12-26 00:26:33
+To: info@filezone.mn
+Subject: [ЗӨРЧИЛ] Шинэ мэдээлэл: #25
+HTTP Code: 201
+Response: {"messageId":"<202512251626.39691022966@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+WITHDRAWAL REQUEST - DT: 2026-01-03 17:49:02
+To: giamia999@gmail.com
+Response: {"messageId":"<202601030949.71665022553@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+WITHDRAWAL REQUEST - DT: 2026-01-03 17:50:01
+To: giamia999@gmail.com
+Response: {"messageId":"<202601030950.12560464643@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+WITHDRAWAL REQUEST - DT: 2026-01-03 17:50:05
+To: giamia999@gmail.com
+Response: {"messageId":"<202601030950.11075857346@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+WITHDRAWAL REQUEST - DT: 2026-01-03 17:50:10
+To: giamia999@gmail.com
+Response: {"messageId":"<202601030950.53999746013@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+WITHDRAWAL REQUEST - DT: 2026-01-03 17:55:58
+To: giamia999@gmail.com
+Response: {"messageId":"<202601030955.93673102162@smtp-relay.mailin.fr>"}
+
+-----------------------------------

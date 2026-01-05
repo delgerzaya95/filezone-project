@@ -1,23 +1,16 @@
 <?php
-// 1. Database болон Google тохиргоог дуудах
-require_once 'includes/db.php';
+// 1. Database тохиргоог дуудах
+// Таны include/db.php дотор $pdo объект үүсч байгаа гэж үзэв.
+require_once 'includes/db.php'; 
 
-// Google Login тохиргоо (Хэрэв байгаа бол)
-$google_login_active = false;
-if (file_exists('vendor/autoload.php') && file_exists('includes/google_config.php')) {
-    try {
-        require_once 'includes/google_config.php';
-        if (isset($google_client)) {
-            $google_login_active = true;
-        }
-    } catch (Throwable $e) {
-        error_log("Google Config Error: " . $e->getMessage());
-    }
+// Session эхлүүлэх (Хэрэв db.php дотор байхгүй бол)
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
 }
 
 // Хэрэв хэрэглэгч аль хэдийн нэвтэрсэн бол
-if (isLoggedIn()) {
-    header('Location: profile.php');
+if (isset($_SESSION['user_id'])) {
+    header('Location: profile/dashboard.php');
     exit;
 }
 
@@ -46,6 +39,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = "Нууц үг доод тал нь 6 оронтой байх ёстой.";
     } else {
         // 2. Давхардал шалгах
+        // $pdo объект db.php-ээс орж ирнэ
         $stmt = $pdo->prepare("SELECT id FROM users WHERE email = :email OR username = :username");
         $stmt->execute([':email' => $email, ':username' => $username]);
         
@@ -55,7 +49,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // 3. Бүртгэх
             try {
                 $hashed_password = password_hash($password, PASSWORD_DEFAULT);
-                $avatar_url = 'assets/images/default-avatar.png'; // Default avatar
+                
+                // --- AVATAR LOGIC START ---
+                // Хэрэглэгчийн нэрнээс hash үүсгэж, түүний эхний 6 оронгоор өнгө гаргах (HEX color)
+                // Ингэснээр тухайн хэрэглэгчийн өнгө хэзээ ч өөрчлөгдөхгүй, тогтмол байна.
+                $hash = md5(strtolower($username));
+                $bg_color = substr($hash, 0, 6);
+                
+                // UI Avatars API ашиглах: 
+                // name=$username (Автоматаар эхний 2 үсгийг авна)
+                // background=$bg_color (Тогтмол өнгө)
+                // color=fff (Текст цагаан)
+                $avatar_url = "https://ui-avatars.com/api/?name=" . urlencode($username) . "&background=" . $bg_color . "&color=fff";
+                // --- AVATAR LOGIC END ---
 
                 $insert = $pdo->prepare("
                     INSERT INTO users (username, email, password, role, is_verified, avatar_url, join_date, last_active) 
@@ -80,7 +86,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $_SESSION['avatar'] = $avatar_url;
 
                     // Профайл руу шилжүүлэх
-                    header('Location: profile.php');
+                    header('Location: profile/dashboard.php');
                     exit;
                 } else {
                     $error = "Бүртгэл үүсгэхэд алдаа гарлаа.";
@@ -101,8 +107,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="assets/css/style.css">
-    <script src="assets/js/tailwind-config.js"></script>
+    <!-- Tailwind Custom Configuration -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#eff6ff',
+                            100: '#dbeafe',
+                            200: '#bfdbfe',
+                            300: '#93c5fd',
+                            400: '#60a5fa',
+                            500: '#3b82f6',
+                            600: '#2563eb', // Primary Brand Color
+                            700: '#1d4ed8',
+                            800: '#1e40af',
+                            900: '#1e3a8a',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .bg-pattern {
+            background-color: #f8fafc;
+            background-image: radial-gradient(#e2e8f0 1px, transparent 1px);
+            background-size: 24px 24px;
+        }
+    </style>
 </head>
 <body class="text-gray-700 antialiased font-sans bg-pattern min-h-screen flex flex-col">
 
@@ -239,17 +276,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 <!-- Google Signup -->
                 <div class="mb-6">
-                    <?php if($google_login_active && isset($google_client)): ?>
-                        <a href="<?php echo $google_client->createAuthUrl(); ?>" class="w-full flex items-center justify-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium text-gray-700">
-                            <img src="https://www.svgrepo.com/show/475656/google-color.svg" class="w-4 h-4" alt="Google">
-                            Google-ээр бүртгүүлэх
-                        </a>
-                    <?php else: ?>
-                        <button class="w-full flex items-center justify-center gap-2 px-4 py-2 bg-gray-100 border border-gray-200 rounded-lg text-sm font-medium text-gray-400 cursor-not-allowed">
-                            <img src="https://www.svgrepo.com/show/475656/google-color.svg" class="w-4 h-4 opacity-50" alt="Google">
-                            Google (Тохиргоо хийгдээгүй)
-                        </button>
-                    <?php endif; ?>
+                    <!-- 
+                          АНХААР: Энд бид шууд google-login.php руу холбож байна.
+                          google-login.php файл дотроо Google Client үүсгэх болон 
+                          redirect хийх логикоо бүрэн шийдсэн байх ёстой.
+                    -->
+                    <a href="google-login.php" class="w-full flex items-center justify-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium text-gray-700 shadow-sm">
+                        <img src="https://www.svgrepo.com/show/475656/google-color.svg" class="w-4 h-4" alt="Google">
+                        Google-ээр бүртгүүлэх
+                    </a>
                 </div>
 
                 <!-- Login Link -->
@@ -269,6 +304,5 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <p class="text-xs text-gray-400">&copy; 2025 Filezone.mn. Бүх эрх хуулиар хамгаалагдсан.</p>
         </div>
     </footer>
-    <script src="assets/js/main.js"></script>
 </body>
 </html>

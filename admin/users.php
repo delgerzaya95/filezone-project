@@ -1,16 +1,108 @@
 <?php
+session_start();
+
+// Database холболт
+require_once '../includes/db.php';
+
+// Админ эрх шалгах
+if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+    header("Location: login.php");
+    exit;
+}
+
 // --------------------------------------------------------------------------
-// MOCK DATA (Хэрэглэгчдийн жагсаалт)
+// ACTION HANDLERS (Үйлдлүүд)
 // --------------------------------------------------------------------------
 
-$users = [
-    ['id' => 1, 'name' => 'Bat-Erdene', 'email' => 'bat@example.com', 'role' => 'user', 'joined' => '2025-01-15', 'status' => 'active', 'avatar' => 'https://ui-avatars.com/api/?name=Bat-Erdene&background=random'],
-    ['id' => 2, 'name' => 'Sarnai Tsetseg', 'email' => 'sarnai@example.com', 'role' => 'editor', 'joined' => '2025-02-20', 'status' => 'active', 'avatar' => 'https://ui-avatars.com/api/?name=Sarnai&background=random'],
-    ['id' => 3, 'name' => 'Boldoo Admin', 'email' => 'admin@filezone.mn', 'role' => 'admin', 'joined' => '2024-12-01', 'status' => 'active', 'avatar' => 'https://ui-avatars.com/api/?name=Boldoo&background=6366f1&color=fff'],
-    ['id' => 4, 'name' => 'Spammer Guy', 'email' => 'spam@fake.com', 'role' => 'user', 'joined' => '2025-10-23', 'status' => 'banned', 'avatar' => 'https://ui-avatars.com/api/?name=Spammer&background=ef4444&color=fff'],
-    ['id' => 5, 'name' => 'Tuya N', 'email' => 'tuya@example.com', 'role' => 'user', 'joined' => '2025-05-10', 'status' => 'pending', 'avatar' => 'https://ui-avatars.com/api/?name=Tuya&background=random'],
-    ['id' => 6, 'name' => 'Gantulga', 'email' => 'gana@example.com', 'role' => 'user', 'joined' => '2025-08-14', 'status' => 'active', 'avatar' => 'https://ui-avatars.com/api/?name=Gantulga&background=random'],
-];
+// Хэрэглэгч устгах
+if (isset($_GET['delete_id'])) {
+    $delete_id = intval($_GET['delete_id']);
+    
+    if ($delete_id == $_SESSION['user_id']) {
+        $_SESSION['error'] = "Та өөрийн бүртгэлийг устгах боломжгүй!";
+    } else {
+        try {
+            $stmt = $pdo->prepare("DELETE FROM users WHERE id = ?");
+            $stmt->execute([$delete_id]);
+            $_SESSION['message'] = "Хэрэглэгч амжилттай устгагдлаа!";
+        } catch (PDOException $e) {
+            $_SESSION['error'] = "Алдаа: " . $e->getMessage();
+        }
+    }
+    header("Location: users.php");
+    exit;
+}
+
+// Төлөв өөрчлөх (Active / Suspended / Banned)
+if (isset($_GET['status_id']) && isset($_GET['new_status'])) {
+    $status_id = intval($_GET['status_id']);
+    $new_status = $_GET['new_status'];
+    
+    // Зөвшөөрөгдсөн утгууд мөн эсэхийг шалгах
+    $allowed_statuses = ['active', 'suspended', 'banned'];
+    
+    if (in_array($new_status, $allowed_statuses)) {
+        try {
+            $stmt = $pdo->prepare("UPDATE users SET status = ? WHERE id = ?");
+            $stmt->execute([$new_status, $status_id]);
+            $_SESSION['message'] = "Төлөв амжилттай шинэчлэгдлээ!";
+        } catch (PDOException $e) {
+            $_SESSION['error'] = "Алдаа: " . $e->getMessage();
+        }
+    } else {
+        $_SESSION['error'] = "Буруу төлөв сонгогдсон байна.";
+    }
+    header("Location: users.php");
+    exit;
+}
+
+// --------------------------------------------------------------------------
+// BACKEND LOGIC (Data Fetching)
+// --------------------------------------------------------------------------
+
+$search = $_GET['search'] ?? '';
+$role_filter = $_GET['role'] ?? '';
+$status_filter = $_GET['status'] ?? '';
+
+$page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+$limit = 10;
+$offset = ($page - 1) * $limit;
+
+// Query бэлдэх
+$where_clauses = ["1=1"];
+$params = [];
+
+if (!empty($search)) {
+    $where_clauses[] = "(username LIKE ? OR email LIKE ? OR phone LIKE ?)";
+    $params[] = "%$search%";
+    $params[] = "%$search%";
+    $params[] = "%$search%";
+}
+
+if (!empty($role_filter)) {
+    $where_clauses[] = "role = ?";
+    $params[] = $role_filter;
+}
+
+if (!empty($status_filter)) {
+    $where_clauses[] = "status = ?";
+    $params[] = $status_filter;
+}
+
+$where_sql = implode(' AND ', $where_clauses);
+
+// Тоолох
+$count_sql = "SELECT COUNT(*) FROM users WHERE $where_sql";
+$stmt = $pdo->prepare($count_sql);
+$stmt->execute($params);
+$total_rows = $stmt->fetchColumn();
+$total_pages = ceil($total_rows / $limit);
+
+// Татах
+$sql = "SELECT * FROM users WHERE $where_sql ORDER BY created_at DESC LIMIT $limit OFFSET $offset";
+$stmt = $pdo->prepare($sql);
+$stmt->execute($params);
+$users = $stmt->fetchAll();
 
 ?>
 <!DOCTYPE html>
@@ -25,11 +117,11 @@ $users = [
     <link href="css/style.css" rel="stylesheet">
     <script src="js/tailwind-config.js"></script>
 </head>
-<body class="font-sans text-slate-800 antialiased">
+<body class="font-sans text-slate-800 antialiased bg-slate-50">
 
     <div class="flex h-screen overflow-hidden">
         
-        <!-- SIDEBAR (Same as Dashboard) -->
+        <!-- SIDEBAR -->
         <?php include 'sidebar.php'; ?>
 
         <!-- MAIN CONTENT -->
@@ -51,39 +143,49 @@ $users = [
             <!-- MAIN BODY -->
             <main class="flex-1 overflow-x-hidden overflow-y-auto bg-slate-50 p-6">
                 
+                <!-- Messages -->
+                <?php if (isset($_SESSION['message'])): ?>
+                    <div class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative mb-4" role="alert">
+                        <span class="block sm:inline"><?php echo $_SESSION['message']; ?></span>
+                    </div>
+                    <?php unset($_SESSION['message']); ?>
+                <?php endif; ?>
+
+                <?php if (isset($_SESSION['error'])): ?>
+                    <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">
+                        <span class="block sm:inline"><?php echo $_SESSION['error']; ?></span>
+                    </div>
+                    <?php unset($_SESSION['error']); ?>
+                <?php endif; ?>
+
                 <!-- Filters Bar -->
                 <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <div class="flex flex-col md:flex-row gap-4 flex-1">
-                        <!-- Search -->
+                    <form method="GET" class="flex flex-col md:flex-row gap-4 flex-1">
                         <div class="relative flex-1 max-w-md">
                             <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 text-sm"></i>
-                            <input type="text" placeholder="Нэр, Имэйл эсвэл ID-аар хайх..." class="pl-10 pr-4 py-2 w-full border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                            <input type="text" name="search" value="<?php echo htmlspecialchars($search); ?>" placeholder="Нэр, Имэйл эсвэл Утас..." class="pl-10 pr-4 py-2 w-full border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
                         </div>
                         
-                        <!-- Role Filter -->
-                        <select class="border border-slate-300 rounded-lg text-sm px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white text-slate-600">
+                        <select name="role" class="border border-slate-300 rounded-lg text-sm px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white text-slate-600">
                             <option value="">Бүх үүрэг</option>
-                            <option value="admin">Администратор</option>
-                            <option value="editor">Редактор</option>
-                            <option value="user">Хэрэглэгч</option>
+                            <option value="admin" <?php echo $role_filter == 'admin' ? 'selected' : ''; ?>>Администратор</option>
+                            <option value="moderator" <?php echo $role_filter == 'moderator' ? 'selected' : ''; ?>>Модератор</option>
+                            <option value="user" <?php echo $role_filter == 'user' ? 'selected' : ''; ?>>Хэрэглэгч</option>
                         </select>
 
-                        <!-- Status Filter -->
-                        <select class="border border-slate-300 rounded-lg text-sm px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white text-slate-600">
+                        <select name="status" class="border border-slate-300 rounded-lg text-sm px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white text-slate-600">
                             <option value="">Бүх төлөв</option>
-                            <option value="active">Идэвхтэй</option>
-                            <option value="pending">Хүлээгдэж буй</option>
-                            <option value="banned">Бандуулсан</option>
+                            <option value="active" <?php echo $status_filter == 'active' ? 'selected' : ''; ?>>Идэвхтэй</option>
+                            <option value="suspended" <?php echo $status_filter == 'suspended' ? 'selected' : ''; ?>>Түр хаасан</option>
+                            <option value="banned" <?php echo $status_filter == 'banned' ? 'selected' : ''; ?>>Бандуулсан</option>
                         </select>
-                    </div>
 
-                    <!-- Export/Bulk Actions -->
+                        <button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 transition">Шүүх</button>
+                    </form>
+
                     <div class="flex items-center gap-2">
-                        <button class="p-2 text-slate-500 hover:text-slate-700 border border-slate-300 rounded-lg bg-white" title="Шинэчлэх">
+                        <button class="p-2 text-slate-500 hover:text-slate-700 border border-slate-300 rounded-lg bg-white" title="Шинэчлэх" onclick="window.location.reload();">
                             <i class="fas fa-sync-alt"></i>
-                        </button>
-                        <button class="p-2 text-slate-500 hover:text-slate-700 border border-slate-300 rounded-lg bg-white" title="Excel татах">
-                            <i class="fas fa-file-excel"></i>
                         </button>
                     </div>
                 </div>
@@ -105,134 +207,261 @@ $users = [
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-slate-100">
-                                <?php foreach ($users as $user): ?>
-                                <tr id="user-row-<?php echo $user['id']; ?>" class="hover:bg-slate-50 transition-colors group">
-                                    <td class="px-6 py-4">
-                                        <input type="checkbox" class="form-checkbox text-indigo-600 rounded">
-                                    </td>
-                                    <td class="px-6 py-4">
-                                        <div class="flex items-center gap-4">
-                                            <img class="h-10 w-10 rounded-full border border-slate-200" src="<?php echo $user['avatar']; ?>" alt="">
-                                            <div>
-                                                <div class="text-sm font-semibold text-slate-900 user-name"><?php echo $user['name']; ?></div>
-                                                <div class="text-xs text-slate-500 user-email"><?php echo $user['email']; ?></div>
+                                <?php if (count($users) > 0): ?>
+                                    <?php foreach ($users as $user): ?>
+                                    <?php
+                                        // AVATAR LOGIC
+                                        $avatarSrc = 'https://ui-avatars.com/api/?name=' . urlencode($user['username']) . '&background=random&color=fff';
+                                        if (!empty($user['avatar_url']) && file_exists('../' . $user['avatar_url'])) {
+                                            $avatarSrc = '../' . $user['avatar_url'];
+                                        }
+                                        
+                                        $userData = htmlspecialchars(json_encode($user), ENT_QUOTES, 'UTF-8');
+                                    ?>
+                                    <tr id="user-row-<?php echo $user['id']; ?>" class="hover:bg-slate-50 transition-colors group">
+                                        <td class="px-6 py-4">
+                                            <input type="checkbox" class="form-checkbox text-indigo-600 rounded">
+                                        </td>
+                                        <td class="px-6 py-4">
+                                            <div class="flex items-center gap-4">
+                                                <img class="h-10 w-10 rounded-full border border-slate-200 object-cover" src="<?php echo $avatarSrc; ?>" alt="<?php echo htmlspecialchars($user['username']); ?>">
+                                                <div>
+                                                    <div class="text-sm font-semibold text-slate-900 user-name"><?php echo htmlspecialchars($user['username']); ?></div>
+                                                    <div class="text-xs text-slate-500 user-email"><?php echo htmlspecialchars($user['email']); ?></div>
+                                                </div>
                                             </div>
-                                        </div>
-                                    </td>
-                                    <td class="px-6 py-4">
-                                        <span class="user-role inline-flex items-center px-2 py-0.5 rounded text-xs font-medium <?php echo $user['role'] === 'admin' ? 'bg-purple-100 text-purple-800' : 'bg-slate-100 text-slate-800'; ?>">
-                                            <?php echo ucfirst($user['role']); ?>
-                                        </span>
-                                    </td>
-                                    <td class="px-6 py-4">
-                                        <span class="text-sm text-slate-600"><?php echo $user['joined']; ?></span>
-                                    </td>
-                                    <td class="px-6 py-4 user-status-cell">
-                                        <?php if($user['status'] == 'active'): ?>
-                                            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-green-50 text-green-700 border border-green-200">
-                                                <span class="w-1.5 h-1.5 rounded-full bg-green-500"></span> Идэвхтэй
+                                        </td>
+                                        <td class="px-6 py-4">
+                                            <span class="user-role inline-flex items-center px-2 py-0.5 rounded text-xs font-medium <?php echo $user['role'] === 'admin' ? 'bg-purple-100 text-purple-800' : ($user['role'] === 'moderator' ? 'bg-blue-100 text-blue-800' : 'bg-slate-100 text-slate-800'); ?>">
+                                                <?php echo ucfirst($user['role']); ?>
                                             </span>
-                                        <?php elseif($user['status'] == 'pending'): ?>
-                                            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-yellow-50 text-yellow-700 border border-yellow-200">
-                                                <span class="w-1.5 h-1.5 rounded-full bg-yellow-500"></span> Хүлээгдэж буй
-                                            </span>
-                                        <?php else: ?>
-                                            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-red-50 text-red-700 border border-red-200">
-                                                <span class="w-1.5 h-1.5 rounded-full bg-red-500"></span> Бандуулсан
-                                            </span>
-                                        <?php endif; ?>
-                                    </td>
-                                    <td class="px-6 py-4 text-right">
-                                        <div class="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <button onclick="openEditUserModal(<?php echo $user['id']; ?>, '<?php echo htmlspecialchars($user['name'], ENT_QUOTES); ?>', '<?php echo $user['email']; ?>', '<?php echo $user['role']; ?>', '<?php echo $user['status']; ?>')" class="p-1.5 text-slate-400 hover:text-indigo-600 rounded hover:bg-indigo-50 transition" title="Засах">
-                                                <i class="fas fa-pen"></i>
-                                            </button>
-                                            
-                                            <?php if($user['status'] !== 'banned'): ?>
-                                            <button onclick="banUser(<?php echo $user['id']; ?>)" class="p-1.5 text-slate-400 hover:text-orange-600 rounded hover:bg-orange-50 transition" title="Бандах">
-                                                <i class="fas fa-ban"></i>
-                                            </button>
+                                        </td>
+                                        <td class="px-6 py-4">
+                                            <span class="text-sm text-slate-600"><?php echo date('Y-m-d', strtotime($user['created_at'])); ?></span>
+                                        </td>
+                                        <td class="px-6 py-4 user-status-cell">
+                                            <?php if($user['status'] == 'active'): ?>
+                                                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-green-50 text-green-700 border border-green-200">
+                                                    <span class="w-1.5 h-1.5 rounded-full bg-green-500"></span> Идэвхтэй
+                                                </span>
+                                            <?php elseif($user['status'] == 'suspended'): ?>
+                                                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-orange-50 text-orange-700 border border-orange-200">
+                                                    <span class="w-1.5 h-1.5 rounded-full bg-orange-500"></span> Түр хаасан
+                                                </span>
                                             <?php else: ?>
-                                            <button onclick="unbanUser(<?php echo $user['id']; ?>)" class="p-1.5 text-slate-400 hover:text-green-600 rounded hover:bg-green-50 transition" title="Бан цуцлах">
-                                                <i class="fas fa-check-circle"></i>
-                                            </button>
+                                                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-red-50 text-red-700 border border-red-200">
+                                                    <span class="w-1.5 h-1.5 rounded-full bg-red-500"></span> Бандуулсан
+                                                </span>
                                             <?php endif; ?>
+                                        </td>
+                                        <td class="px-6 py-4 text-right">
+                                            <div class="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                
+                                                <button onclick='openViewUserModal(<?php echo $userData; ?>)' class="p-1.5 text-slate-400 hover:text-blue-600 rounded hover:bg-blue-50 transition" title="Дэлгэрэнгүй харах">
+                                                    <i class="fas fa-eye"></i>
+                                                </button>
 
-                                            <button onclick="deleteUser(<?php echo $user['id']; ?>)" class="p-1.5 text-slate-400 hover:text-red-600 rounded hover:bg-red-50 transition" title="Устгах">
-                                                <i class="fas fa-trash-alt"></i>
-                                            </button>
-                                        </div>
-                                    </td>
-                                </tr>
-                                <?php endforeach; ?>
+                                                <a href="edit_user.php?id=<?php echo $user['id']; ?>" class="p-1.5 text-slate-400 hover:text-indigo-600 rounded hover:bg-indigo-50 transition" title="Засах">
+                                                    <i class="fas fa-pen"></i>
+                                                </a>
+                                                
+                                                <?php if($user['status'] == 'active'): ?>
+                                                    <!-- Active User: Show Suspend and Ban options -->
+                                                    <a href="?status_id=<?php echo $user['id']; ?>&new_status=suspended" class="p-1.5 text-slate-400 hover:text-orange-600 rounded hover:bg-orange-50 transition" title="Түр хаах (Suspend)" onclick="return confirm('Энэ хэрэглэгчийг Түр хаах уу?')">
+                                                        <i class="fas fa-pause-circle"></i>
+                                                    </a>
+                                                    <a href="?status_id=<?php echo $user['id']; ?>&new_status=banned" class="p-1.5 text-slate-400 hover:text-red-600 rounded hover:bg-red-50 transition" title="Бандах" onclick="return confirm('Энэ хэрэглэгчийг BAN хийх үү?')">
+                                                        <i class="fas fa-ban"></i>
+                                                    </a>
+                                                <?php else: ?>
+                                                    <!-- Suspended/Banned User: Show Activate option -->
+                                                    <a href="?status_id=<?php echo $user['id']; ?>&new_status=active" class="p-1.5 text-slate-400 hover:text-green-600 rounded hover:bg-green-50 transition" title="Идэвхжүүлэх" onclick="return confirm('Энэ хэрэглэгчийг идэвхжүүлэх үү?')">
+                                                        <i class="fas fa-check-circle"></i>
+                                                    </a>
+                                                    <?php if($user['status'] == 'suspended'): ?>
+                                                        <a href="?status_id=<?php echo $user['id']; ?>&new_status=banned" class="p-1.5 text-slate-400 hover:text-red-600 rounded hover:bg-red-50 transition" title="Бандах" onclick="return confirm('Энэ хэрэглэгчийг BAN хийх үү?')">
+                                                            <i class="fas fa-ban"></i>
+                                                        </a>
+                                                    <?php endif; ?>
+                                                <?php endif; ?>
+
+                                                <a href="?delete_id=<?php echo $user['id']; ?>" class="p-1.5 text-slate-400 hover:text-red-600 rounded hover:bg-red-50 transition" title="Устгах" onclick="return confirm('Анхаар! Хэрэглэгчийг устгавал бүх мэдээлэл устана. Үргэлжлүүлэх үү?')">
+                                                    <i class="fas fa-trash-alt"></i>
+                                                </a>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    <?php endforeach; ?>
+                                <?php else: ?>
+                                    <tr>
+                                        <td colspan="6" class="px-6 py-8 text-center text-slate-500">
+                                            Хэрэглэгч олдсонгүй.
+                                        </td>
+                                    </tr>
+                                <?php endif; ?>
                             </tbody>
                         </table>
                     </div>
 
                     <!-- Pagination -->
+                    <?php if($total_pages > 1): ?>
                     <div class="bg-white px-6 py-4 border-t border-slate-200 flex items-center justify-between">
-                        <span class="text-sm text-slate-500">Нийт 1250 хэрэглэгчээс 1-6 харагдаж байна</span>
+                        <span class="text-sm text-slate-500">Нийт <?php echo $total_rows; ?> хэрэглэгчээс <?php echo $offset + 1; ?>-<?php echo min($offset + $limit, $total_rows); ?> харагдаж байна</span>
                         <div class="flex items-center gap-1">
-                            <button class="px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50 disabled:opacity-50 text-slate-600" disabled>Өмнөх</button>
-                            <button class="px-3 py-1 text-sm border border-indigo-500 bg-indigo-50 text-indigo-600 rounded font-medium">1</button>
-                            <button class="px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50 text-slate-600">2</button>
-                            <span class="text-slate-400 px-1">...</span>
-                            <button class="px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50 text-slate-600">Дараах</button>
+                            <?php if($page > 1): ?>
+                                <a href="?page=<?php echo $page - 1; ?>&search=<?php echo urlencode($search); ?>&role=<?php echo urlencode($role_filter); ?>&status=<?php echo urlencode($status_filter); ?>" class="px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50 text-slate-600">Өмнөх</a>
+                            <?php endif; ?>
+
+                            <?php for($i = 1; $i <= $total_pages; $i++): ?>
+                                <a href="?page=<?php echo $i; ?>&search=<?php echo urlencode($search); ?>&role=<?php echo urlencode($role_filter); ?>&status=<?php echo urlencode($status_filter); ?>" class="px-3 py-1 text-sm border <?php echo $i == $page ? 'border-indigo-500 bg-indigo-50 text-indigo-600 font-medium' : 'border-slate-300 rounded hover:bg-slate-50 text-slate-600'; ?> rounded">
+                                    <?php echo $i; ?>
+                                </a>
+                            <?php endfor; ?>
+
+                            <?php if($page < $total_pages): ?>
+                                <a href="?page=<?php echo $page + 1; ?>&search=<?php echo urlencode($search); ?>&role=<?php echo urlencode($role_filter); ?>&status=<?php echo urlencode($status_filter); ?>" class="px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50 text-slate-600">Дараах</a>
+                            <?php endif; ?>
                         </div>
                     </div>
+                    <?php endif; ?>
                 </div>
 
             </main>
         </div>
     </div>
-    
-    <!-- Edit User Modal -->
-    <div id="editUserModal" class="fixed inset-0 z-50 hidden overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+
+    <!-- View User Details Modal -->
+    <div id="viewUserModal" class="fixed inset-0 z-50 hidden overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
         <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-            <!-- Overlay -->
-            <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" onclick="closeEditUserModal()"></div>
+            <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" onclick="closeViewUserModal()"></div>
             <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
-            <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+            <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full">
+                
                 <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-                    <h3 class="text-lg leading-6 font-medium text-gray-900" id="modal-title">Хэрэглэгчийн мэдээлэл засах</h3>
-                    <div class="mt-4 space-y-4">
-                        <input type="hidden" id="editUserId">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">Нэр</label>
-                            <input type="text" id="editUserName" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">Имэйл</label>
-                            <input type="email" id="editUserEmail" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
-                        </div>
-                        <div class="grid grid-cols-2 gap-4">
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700">Үүрэг</label>
-                                <select id="editUserRole" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
-                                    <option value="user">Хэрэглэгч</option>
-                                    <option value="editor">Редактор</option>
-                                    <option value="admin">Администратор</option>
-                                </select>
+                    <div class="flex justify-between items-start">
+                        <h3 class="text-xl leading-6 font-bold text-gray-900 mb-4" id="view-modal-title">Хэрэглэгчийн дэлгэрэнгүй</h3>
+                        <button onclick="closeViewUserModal()" class="text-gray-400 hover:text-gray-500">
+                            <i class="fas fa-times text-xl"></i>
+                        </button>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <!-- Profile Image & Basic Info -->
+                        <div class="md:col-span-1 flex flex-col items-center text-center p-4 bg-gray-50 rounded-lg">
+                            <img id="viewUserAvatar" src="" alt="Avatar" class="h-24 w-24 rounded-full object-cover border-4 border-white shadow-md mb-3">
+                            <h4 id="viewUsername" class="text-lg font-bold text-gray-800 break-all"></h4>
+                            <span id="viewUserRole" class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 mt-1"></span>
+                            <div class="mt-4 w-full">
+                                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Дансны үлдэгдэл</div>
+                                <div id="viewUserBalance" class="text-xl font-bold text-green-600"></div>
+                                <div id="viewUserPendingBalance" class="text-sm text-gray-500 mt-1">Хүлээгдэж буй: 0₮</div>
                             </div>
+                        </div>
+
+                        <!-- Detailed Info -->
+                        <div class="md:col-span-2 space-y-4">
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-xs font-medium text-gray-500 uppercase">Бүтэн нэр</label>
+                                    <div id="viewFullName" class="text-sm font-medium text-gray-900 mt-1 border-b border-gray-100 pb-1"></div>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium text-gray-500 uppercase">Имэйл</label>
+                                    <div id="viewEmail" class="text-sm font-medium text-gray-900 mt-1 border-b border-gray-100 pb-1 break-all"></div>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium text-gray-500 uppercase">Утас</label>
+                                    <div id="viewPhone" class="text-sm font-medium text-gray-900 mt-1 border-b border-gray-100 pb-1"></div>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium text-gray-500 uppercase">Бүртгүүлсэн огноо</label>
+                                    <div id="viewJoinDate" class="text-sm font-medium text-gray-900 mt-1 border-b border-gray-100 pb-1"></div>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium text-gray-500 uppercase">Түвшин (Level)</label>
+                                    <div id="viewLevel" class="text-sm font-medium text-gray-900 mt-1 border-b border-gray-100 pb-1"></div>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium text-gray-500 uppercase">Сүүлд идэвхтэй</label>
+                                    <div id="viewLastActive" class="text-sm font-medium text-gray-900 mt-1 border-b border-gray-100 pb-1"></div>
+                                </div>
+                            </div>
+
                             <div>
-                                <label class="block text-sm font-medium text-gray-700">Төлөв</label>
-                                <select id="editUserStatus" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
-                                    <option value="active">Идэвхтэй</option>
-                                    <option value="pending">Хүлээгдэж буй</option>
-                                    <option value="banned">Бандуулсан</option>
-                                </select>
+                                <label class="block text-xs font-medium text-gray-500 uppercase">Ур чадвар (Skills)</label>
+                                <div id="viewSkills" class="mt-1 flex flex-wrap gap-1"></div>
+                            </div>
+
+                            <div>
+                                <label class="block text-xs font-medium text-gray-500 uppercase">Товч намтар (Bio)</label>
+                                <p id="viewBio" class="text-sm text-gray-600 mt-1 bg-gray-50 p-2 rounded"></p>
                             </div>
                         </div>
                     </div>
                 </div>
+                
                 <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
-                    <button type="button" onclick="saveUserChanges()" class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-indigo-600 text-base font-medium text-white hover:bg-indigo-700 focus:outline-none sm:ml-3 sm:w-auto sm:text-sm">Хадгалах</button>
-                    <button type="button" onclick="closeEditUserModal()" class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">Болих</button>
+                    <button type="button" onclick="closeViewUserModal()" class="w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none sm:ml-3 sm:w-auto sm:text-sm">Хаах</button>
                 </div>
             </div>
         </div>
     </div>
 
     <script src="js/script.js"></script>
+    <script>
+    function openViewUserModal(user) {
+        document.getElementById('viewUsername').textContent = user.username || '-';
+        document.getElementById('viewUserRole').textContent = user.role || 'User';
+        
+        let avatarSrc = 'https://ui-avatars.com/api/?name=' + encodeURIComponent(user.username) + '&background=random&color=fff';
+        if (user.avatar_url && user.avatar_url !== '' && user.avatar_url !== null) {
+            avatarSrc = '../' + user.avatar_url; 
+        }
+        document.getElementById('viewUserAvatar').src = avatarSrc;
+
+        if (user.full_name && user.full_name.trim() !== "") {
+            document.getElementById('viewFullName').textContent = user.full_name;
+        } else {
+            document.getElementById('viewFullName').textContent = user.username || '-';
+        }
+        
+        document.getElementById('viewEmail').textContent = user.email || '-';
+        document.getElementById('viewPhone').textContent = user.phone || 'Бүртгэлгүй';
+        
+        const joinDate = user.created_at ? new Date(user.created_at).toLocaleDateString('mn-MN') : '-';
+        document.getElementById('viewJoinDate').textContent = joinDate;
+        
+        document.getElementById('viewLastActive').textContent = user.last_active ? new Date(user.last_active).toLocaleString('mn-MN') : 'Мэдэгдэхгүй';
+
+        const balance = user.balance ? new Intl.NumberFormat('mn-MN').format(user.balance) : '0';
+        document.getElementById('viewUserBalance').textContent = balance + '₮';
+        
+        const pending = user.pending_balance ? new Intl.NumberFormat('mn-MN').format(user.pending_balance) : '0';
+        document.getElementById('viewUserPendingBalance').textContent = 'Хүлээгдэж буй: ' + pending + '₮';
+
+        document.getElementById('viewLevel').textContent = user.level || 'Beginner';
+        document.getElementById('viewBio').textContent = user.bio || 'Тайлбар алга.';
+
+        const skillsContainer = document.getElementById('viewSkills');
+        skillsContainer.innerHTML = '';
+        if (user.skills) {
+            const skills = user.skills.split(',');
+            skills.forEach(skill => {
+                const span = document.createElement('span');
+                span.className = 'inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-indigo-100 text-indigo-800';
+                span.textContent = skill.trim();
+                skillsContainer.appendChild(span);
+            });
+        } else {
+            skillsContainer.textContent = '-';
+        }
+
+        document.getElementById('viewUserModal').classList.remove('hidden');
+    }
+
+    function closeViewUserModal() {
+        document.getElementById('viewUserModal').classList.add('hidden');
+    }
+    </script>
 </body>
 </html>

@@ -1,61 +1,201 @@
 <?php
+session_start();
+
+// Database холболт
+require_once '../includes/db.php';
+
+// Админ эрх шалгах
+if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+    header("Location: login.php");
+    exit;
+}
+
+$message = '';
+$error = '';
+
 // --------------------------------------------------------------------------
-// MOCK DATA (Ангилалын бүтэц)
+// HELPER FUNCTIONS (Color Generator)
 // --------------------------------------------------------------------------
 
-// Үндсэн ангилалууд (Parent Categories)
-// Дэд ангилалууд (Sub Categories) - parent_id нь үндсэн ангилалын ID байна.
-$categories = [
-    [
-        'id' => 1, 
-        'name' => 'Боловсрол', 
-        'slug' => 'education',
-        'icon' => 'fa-graduation-cap',
-        'file_count' => 1250, 
-        'status' => 'active', 
-        'parent_id' => null, // Main Category
-        'subcategories' => [
-            ['id' => 11, 'name' => 'ЕБС-ийн сурах бичиг', 'slug' => 'ebs-books', 'file_count' => 450, 'status' => 'active', 'parent_id' => 1],
-            ['id' => 12, 'name' => 'Оюутны лекц', 'slug' => 'university-lectures', 'file_count' => 800, 'status' => 'active', 'parent_id' => 1]
-        ]
-    ],
-    [
-        'id' => 2, 
-        'name' => 'Програм хангамж', 
-        'slug' => 'software',
-        'icon' => 'fa-laptop-code',
-        'file_count' => 850, 
-        'status' => 'active', 
-        'parent_id' => null,
-        'subcategories' => [
-            ['id' => 21, 'name' => 'Үйлдлийн систем', 'slug' => 'os', 'file_count' => 120, 'status' => 'active', 'parent_id' => 2],
-            ['id' => 22, 'name' => 'Хэрэглээний програм', 'slug' => 'apps', 'file_count' => 730, 'status' => 'active', 'parent_id' => 2]
-        ]
-    ],
-    [
-        'id' => 3, 
-        'name' => 'Мультимедиа', 
-        'slug' => 'multimedia',
-        'icon' => 'fa-photo-video',
-        'file_count' => 3400, 
-        'status' => 'active', 
-        'parent_id' => null,
-        'subcategories' => [
-            ['id' => 31, 'name' => 'Зураг & Дизайн', 'slug' => 'graphics', 'file_count' => 2100, 'status' => 'active', 'parent_id' => 3],
-            ['id' => 32, 'name' => 'Видео & Аудио', 'slug' => 'video-audio', 'file_count' => 1300, 'status' => 'active', 'parent_id' => 3]
-        ]
-    ],
-    [
-        'id' => 4, 
-        'name' => 'Архив', 
-        'slug' => 'archive',
-        'icon' => 'fa-archive',
-        'file_count' => 50, 
-        'status' => 'inactive', 
-        'parent_id' => null,
-        'subcategories' => [] // No subcategories
-    ]
-];
+function get_category_color($id) {
+    $colors = [
+        'bg-red-100 text-red-600',
+        'bg-orange-100 text-orange-600',
+        'bg-amber-100 text-amber-600',
+        'bg-yellow-100 text-yellow-600',
+        'bg-lime-100 text-lime-600',
+        'bg-green-100 text-green-600',
+        'bg-emerald-100 text-emerald-600',
+        'bg-teal-100 text-teal-600',
+        'bg-cyan-100 text-cyan-600',
+        'bg-sky-100 text-sky-600',
+        'bg-blue-100 text-blue-600',
+        'bg-indigo-100 text-indigo-600',
+        'bg-violet-100 text-violet-600',
+        'bg-purple-100 text-purple-600',
+        'bg-fuchsia-100 text-fuchsia-600',
+        'bg-pink-100 text-pink-600',
+        'bg-rose-100 text-rose-600'
+    ];
+    
+    // ID-аар нь индекс гаргаж авах (Modulo operator)
+    $index = $id % count($colors);
+    return $colors[$index];
+}
+
+// --------------------------------------------------------------------------
+// ACTION HANDLERS (Add, Edit, Delete)
+// --------------------------------------------------------------------------
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    
+    // 1. ADD / UPDATE CATEGORY
+    if (isset($_POST['category_action'])) {
+        $name = $_POST['name'];
+        $slug = $_POST['slug'];
+        $icon_class = $_POST['icon_class'];
+        
+        if ($_POST['category_action'] == 'add') {
+            // Check slug
+            $stmt = $pdo->prepare("SELECT id FROM categories WHERE slug = ?");
+            $stmt->execute([$slug]);
+            if ($stmt->rowCount() > 0) {
+                $error = "Энэ slug бүртгэлтэй байна. Өөр slug сонгоно уу.";
+            } else {
+                $stmt = $pdo->prepare("INSERT INTO categories (name, slug, icon_class) VALUES (?, ?, ?)");
+                if ($stmt->execute([$name, $slug, $icon_class])) {
+                    $message = "Ангилал амжилттай нэмэгдлээ.";
+                } else {
+                    $error = "Ангилал нэмэхэд алдаа гарлаа.";
+                }
+            }
+        } elseif ($_POST['category_action'] == 'update') {
+            $id = intval($_POST['id']);
+            // Check slug excluding current
+            $stmt = $pdo->prepare("SELECT id FROM categories WHERE slug = ? AND id != ?");
+            $stmt->execute([$slug, $id]);
+            if ($stmt->rowCount() > 0) {
+                $error = "Энэ slug бүртгэлтэй байна.";
+            } else {
+                $stmt = $pdo->prepare("UPDATE categories SET name = ?, slug = ?, icon_class = ? WHERE id = ?");
+                if ($stmt->execute([$name, $slug, $icon_class, $id])) {
+                    $message = "Ангилал амжилттай шинэчлэгдлээ.";
+                } else {
+                    $error = "Ангилал засахад алдаа гарлаа.";
+                }
+            }
+        }
+    }
+
+    // 2. ADD / UPDATE SUBCATEGORY
+    if (isset($_POST['subcategory_action'])) {
+        $category_id = intval($_POST['category_id']);
+        $name = $_POST['name'];
+        
+        if ($_POST['subcategory_action'] == 'add') {
+            $stmt = $pdo->prepare("INSERT INTO subcategories (category_id, name) VALUES (?, ?)");
+            if ($stmt->execute([$category_id, $name])) {
+                $message = "Дэд ангилал нэмэгдлээ.";
+            } else {
+                $error = "Дэд ангилал нэмэхэд алдаа гарлаа.";
+            }
+        } elseif ($_POST['subcategory_action'] == 'update') {
+            $id = intval($_POST['id']);
+            $stmt = $pdo->prepare("UPDATE subcategories SET category_id = ?, name = ? WHERE id = ?");
+            if ($stmt->execute([$category_id, $name, $id])) {
+                $message = "Дэд ангилал шинэчлэгдлээ.";
+            } else {
+                $error = "Дэд ангилал засахад алдаа гарлаа.";
+            }
+        }
+    }
+
+    // 3. ADD / UPDATE CHILD CATEGORY
+    if (isset($_POST['child_category_action'])) {
+        $subcategory_id = intval($_POST['subcategory_id']);
+        $name = $_POST['name'];
+        
+        if ($_POST['child_category_action'] == 'add') {
+            $stmt = $pdo->prepare("INSERT INTO child_category (subcategory_id, name) VALUES (?, ?)");
+            if ($stmt->execute([$subcategory_id, $name])) {
+                $message = "Жижиг ангилал нэмэгдлээ.";
+            } else {
+                $error = "Жижиг ангилал нэмэхэд алдаа гарлаа.";
+            }
+        } elseif ($_POST['child_category_action'] == 'update') {
+            $id = intval($_POST['id']);
+            $stmt = $pdo->prepare("UPDATE child_category SET subcategory_id = ?, name = ? WHERE id = ?");
+            if ($stmt->execute([$subcategory_id, $name, $id])) {
+                $message = "Жижиг ангилал шинэчлэгдлээ.";
+            } else {
+                $error = "Жижиг ангилал засахад алдаа гарлаа.";
+            }
+        }
+    }
+
+    // 4. DELETE ACTIONS
+    if (isset($_POST['delete_category'])) {
+        $id = intval($_POST['id']);
+        // Check dependencies
+        $stmt = $pdo->prepare("SELECT COUNT(*) FROM subcategories WHERE category_id = ?");
+        $stmt->execute([$id]);
+        if ($stmt->fetchColumn() > 0) {
+            $error = "Энэ ангилалд дэд ангилал байна. Эхлээд тэдгээрийг устгана уу.";
+        } else {
+            $stmt = $pdo->prepare("DELETE FROM categories WHERE id = ?");
+            $stmt->execute([$id]);
+            $message = "Ангилал устгагдлаа.";
+        }
+    }
+
+    if (isset($_POST['delete_subcategory'])) {
+        $id = intval($_POST['id']);
+        $stmt = $pdo->prepare("SELECT COUNT(*) FROM child_category WHERE subcategory_id = ?");
+        $stmt->execute([$id]);
+        if ($stmt->fetchColumn() > 0) {
+            $error = "Энэ дэд ангилалд жижиг ангилал байна.";
+        } else {
+            $stmt = $pdo->prepare("DELETE FROM subcategories WHERE id = ?");
+            $stmt->execute([$id]);
+            $message = "Дэд ангилал устгагдлаа.";
+        }
+    }
+
+    if (isset($_POST['delete_child_category'])) {
+        $id = intval($_POST['id']);
+        $stmt = $pdo->prepare("DELETE FROM child_category WHERE id = ?");
+        $stmt->execute([$id]);
+        $message = "Жижиг ангилал устгагдлаа.";
+    }
+}
+
+// --------------------------------------------------------------------------
+// DATA FETCHING
+// --------------------------------------------------------------------------
+
+// 1. Categories
+$categories = $pdo->query("
+    SELECT c.*, 
+    (SELECT COUNT(*) FROM subcategories WHERE category_id = c.id) as subcategory_count
+    FROM categories c ORDER BY c.id ASC
+")->fetchAll();
+
+// 2. Subcategories
+$subcategories = $pdo->query("
+    SELECT sc.*, c.name as category_name, c.icon_class as category_icon
+    FROM subcategories sc
+    JOIN categories c ON sc.category_id = c.id
+    ORDER BY c.name, sc.name
+")->fetchAll();
+
+// 3. Child Categories
+$child_categories = $pdo->query("
+    SELECT cc.*, sc.name as subcategory_name, sc.category_id, c.name as category_name
+    FROM child_category cc
+    JOIN subcategories sc ON cc.subcategory_id = sc.id
+    JOIN categories c ON sc.category_id = c.id
+    ORDER BY c.name, sc.name, cc.name
+")->fetchAll();
 
 ?>
 <!DOCTYPE html>
@@ -63,21 +203,21 @@ $categories = [
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Categories Management - Filezone Admin</title>
+    <title>Ангилал - FileZone Admin</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link href="css/style.css" rel="stylesheet">
     <script src="js/tailwind-config.js"></script>
 </head>
-<body class="font-sans text-slate-800 antialiased">
+<body class="font-sans text-slate-800 antialiased bg-slate-50">
 
     <div class="flex h-screen overflow-hidden">
         
-        <!-- SIDEBAR (Same as previous files) -->
+        <!-- SIDEBAR -->
         <?php include 'sidebar.php'; ?>
 
-        <!-- MAIN CONTENT -->
+        <!-- MAIN CONTENT AREA -->
         <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
             
             <!-- HEADER -->
@@ -86,141 +226,154 @@ $categories = [
                     <button id="mobileMenuBtn" class="md:hidden text-slate-500"><i class="fas fa-bars text-xl"></i></button>
                     <h1 class="text-xl font-bold text-slate-800">Ангилалын удирдлага</h1>
                 </div>
+                <!-- Profile -->
                 <div class="flex items-center gap-3">
-                    <button onclick="openModal('add')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition shadow-sm">
-                        <i class="fas fa-plus"></i> <span class="hidden sm:inline">Ангилал нэмэх</span>
-                    </button>
+                    <span class="text-sm font-medium text-slate-700">Админ</span>
                 </div>
             </header>
 
             <!-- MAIN BODY -->
-            <main class="flex-1 overflow-x-hidden overflow-y-auto bg-slate-50 p-6">
+            <main class="flex-1 overflow-x-hidden overflow-y-auto p-6">
                 
-                <!-- Quick Stats -->
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-                    <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
-                        <div>
-                            <p class="text-sm text-slate-500">Нийт ангилал</p>
-                            <h3 class="text-2xl font-bold text-slate-800">10</h3>
-                        </div>
-                        <div class="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-lg flex items-center justify-center">
-                            <i class="fas fa-layer-group"></i>
-                        </div>
+                <!-- Messages -->
+                <?php if ($message): ?>
+                    <div class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative mb-4" role="alert">
+                        <span class="block sm:inline"><?php echo $message; ?></span>
                     </div>
-                    <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
-                        <div>
-                            <p class="text-sm text-slate-500">Идэвхтэй</p>
-                            <h3 class="text-2xl font-bold text-slate-800">9</h3>
-                        </div>
-                        <div class="w-10 h-10 bg-green-50 text-green-600 rounded-lg flex items-center justify-center">
-                            <i class="fas fa-check-circle"></i>
-                        </div>
-                    </div>
-                    <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
-                        <div>
-                            <p class="text-sm text-slate-500">Хоосон</p>
-                            <h3 class="text-2xl font-bold text-slate-800">1</h3>
-                        </div>
-                        <div class="w-10 h-10 bg-slate-100 text-slate-500 rounded-lg flex items-center justify-center">
-                            <i class="fas fa-inbox"></i>
-                        </div>
-                    </div>
-                </div>
+                <?php endif; ?>
 
-                <!-- Categories Table -->
-                <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                <?php if ($error): ?>
+                    <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">
+                        <span class="block sm:inline"><?php echo $error; ?></span>
+                    </div>
+                <?php endif; ?>
+
+                <!-- 1. CATEGORIES SECTION -->
+                <div class="bg-white rounded-xl shadow-sm border border-slate-200 mb-8 overflow-hidden">
+                    <div class="px-6 py-4 border-b border-slate-200 flex justify-between items-center bg-gray-50">
+                        <h2 class="text-lg font-bold text-slate-800">Үндсэн Ангилал</h2>
+                        <button onclick="openCategoryModal('add')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded text-sm font-medium flex items-center gap-2 transition">
+                            <i class="fas fa-plus"></i> Шинэ ангилал
+                        </button>
+                    </div>
                     <div class="overflow-x-auto">
                         <table class="w-full text-left border-collapse">
                             <thead>
-                                <tr class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
-                                    <th class="px-6 py-4 font-semibold w-1/3">Ангилалын нэр</th>
-                                    <th class="px-6 py-4 font-semibold">Slug (URL)</th>
-                                    <th class="px-6 py-4 font-semibold">Файл тоо</th>
-                                    <th class="px-6 py-4 font-semibold">Төлөв</th>
-                                    <th class="px-6 py-4 font-semibold text-right">Үйлдэл</th>
+                                <tr class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
+                                    <th class="px-6 py-3 font-semibold">Icon</th>
+                                    <th class="px-6 py-3 font-semibold">Нэр</th>
+                                    <th class="px-6 py-3 font-semibold">Slug (Англи)</th>
+                                    <th class="px-6 py-3 font-semibold text-center">Дэд ангилал</th>
+                                    <th class="px-6 py-3 font-semibold text-right">Үйлдэл</th>
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-slate-100">
                                 <?php foreach ($categories as $cat): ?>
-                                    <!-- Parent Category Row -->
-                                    <tr id="cat-<?php echo $cat['id']; ?>" class="hover:bg-slate-50 transition-colors group bg-white">
-                                        <td class="px-6 py-4">
-                                            <div class="flex items-center gap-3">
-                                                <div class="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-100">
-                                                    <i class="fas <?php echo $cat['icon']; ?>"></i>
-                                                </div>
-                                                <div>
-                                                    <p class="font-bold text-slate-800"><?php echo $cat['name']; ?></p>
-                                                    <p class="text-xs text-slate-400">Үндсэн ангилал</p>
-                                                </div>
-                                            </div>
-                                        </td>
-                                        <td class="px-6 py-4 text-sm font-mono text-slate-500">/<?php echo $cat['slug']; ?></td>
-                                        <td class="px-6 py-4">
-                                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-800">
-                                                <?php echo number_format($cat['file_count']); ?>
-                                            </span>
-                                        </td>
-                                        <td class="px-6 py-4">
-                                            <?php if($cat['status'] == 'active'): ?>
-                                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-green-50 text-green-700">
-                                                    <span class="w-1.5 h-1.5 rounded-full bg-green-500"></span> Active
-                                                </span>
-                                            <?php else: ?>
-                                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-500">
-                                                    <span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span> Inactive
-                                                </span>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td class="px-6 py-4 text-right">
-                                            <div class="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                <button onclick="openModal('edit', <?php echo htmlspecialchars(json_encode($cat)); ?>)" class="p-1.5 text-slate-400 hover:text-indigo-600 rounded hover:bg-indigo-50 transition" title="Засах">
-                                                    <i class="fas fa-pen"></i>
-                                                </button>
-                                                <button class="p-1.5 text-slate-400 hover:text-red-600 rounded hover:bg-red-50 transition" title="Устгах">
-                                                    <i class="fas fa-trash-alt"></i>
-                                                </button>
-                                            </div>
-                                        </td>
-                                    </tr>
+                                <tr class="hover:bg-slate-50">
+                                    <td class="px-6 py-4 text-center w-16">
+                                        <!-- Dynamic Color based on ID -->
+                                        <div class="w-8 h-8 rounded <?php echo get_category_color($cat['id']); ?> flex items-center justify-center">
+                                            <i class="<?php echo htmlspecialchars($cat['icon_class']); ?>"></i>
+                                        </div>
+                                    </td>
+                                    <td class="px-6 py-4 font-medium text-slate-700"><?php echo htmlspecialchars($cat['name']); ?></td>
+                                    <td class="px-6 py-4 text-sm text-slate-500"><?php echo htmlspecialchars($cat['slug']); ?></td>
+                                    <td class="px-6 py-4 text-center text-sm">
+                                        <span class="bg-slate-100 text-slate-700 px-2 py-1 rounded-full text-xs font-bold"><?php echo $cat['subcategory_count']; ?></span>
+                                    </td>
+                                    <td class="px-6 py-4 text-right">
+                                        <button onclick="openCategoryModal('edit', <?php echo htmlspecialchars(json_encode($cat)); ?>)" class="text-indigo-600 hover:text-indigo-900 mx-1"><i class="fas fa-edit"></i></button>
+                                        <form method="POST" class="inline-block" onsubmit="return confirm('Та энэ ангиллыг устгахдаа итгэлтэй байна уу?');">
+                                            <input type="hidden" name="delete_category" value="1">
+                                            <input type="hidden" name="id" value="<?php echo $cat['id']; ?>">
+                                            <button type="submit" class="text-red-600 hover:text-red-900 mx-1"><i class="fas fa-trash"></i></button>
+                                        </form>
+                                    </td>
+                                </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
 
-                                    <!-- Subcategories Loop -->
-                                    <?php foreach ($cat['subcategories'] as $sub): ?>
-                                    <tr id="cat-<?php echo $sub['id']; ?>" class="subcategory-row transition-colors group border-l-4 border-l-indigo-500/0 hover:border-l-indigo-500">
-                                        <td class="px-6 py-3 relative">
-                                            <!-- Visual Tree structure -->
-                                            <div class="flex items-center gap-3 pl-8">
-                                                <div class="absolute left-6 top-1/2 -translate-y-1/2 w-4 h-[1px] bg-slate-300"></div>
-                                                <div class="absolute left-6 top-0 h-1/2 w-[1px] bg-slate-300"></div>
-                                                
-                                                <div class="w-2 h-2 rounded-full bg-slate-300"></div>
-                                                <p class="text-sm font-medium text-slate-700"><?php echo $sub['name']; ?></p>
+                <!-- 2. SUBCATEGORIES SECTION -->
+                <div class="bg-white rounded-xl shadow-sm border border-slate-200 mb-8 overflow-hidden">
+                    <div class="px-6 py-4 border-b border-slate-200 flex justify-between items-center bg-gray-50">
+                        <h2 class="text-lg font-bold text-slate-800">Дэд Ангилал</h2>
+                        <button onclick="openSubcategoryModal('add')" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-sm font-medium flex items-center gap-2 transition">
+                            <i class="fas fa-plus"></i> Шинэ дэд ангилал
+                        </button>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
+                                    <th class="px-6 py-3 font-semibold">Үндсэн Ангилал</th>
+                                    <th class="px-6 py-3 font-semibold">Дэд Ангилал</th>
+                                    <th class="px-6 py-3 font-semibold text-right">Үйлдэл</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100">
+                                <?php foreach ($subcategories as $sub): ?>
+                                <tr class="hover:bg-slate-50">
+                                    <td class="px-6 py-4 text-sm text-slate-600">
+                                        <span class="flex items-center gap-2">
+                                            <!-- Dynamic Color here as well -->
+                                            <div class="w-6 h-6 rounded-full flex items-center justify-center text-xs <?php echo get_category_color($sub['category_id']); ?>">
+                                                <i class="<?php echo $sub['category_icon']; ?>"></i>
                                             </div>
-                                        </td>
-                                        <td class="px-6 py-3 text-sm font-mono text-slate-400">/<?php echo $cat['slug']; ?>/<?php echo $sub['slug']; ?></td>
-                                        <td class="px-6 py-3">
-                                            <span class="text-xs text-slate-500"><?php echo number_format($sub['file_count']); ?> файл</span>
-                                        </td>
-                                        <td class="px-6 py-3">
-                                            <?php if($sub['status'] == 'active'): ?>
-                                                <span class="text-xs text-green-600 font-medium">Active</span>
-                                            <?php else: ?>
-                                                <span class="text-xs text-slate-400 font-medium">Inactive</span>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td class="px-6 py-3 text-right">
-                                            <div class="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                <button onclick="openModal('edit', <?php echo htmlspecialchars(json_encode($sub)); ?>)" class="p-1 text-slate-400 hover:text-indigo-600 text-xs">
-                                                    <i class="fas fa-pen"></i>
-                                                </button>
-                                                <button class="p-1 text-slate-400 hover:text-red-600 text-xs">
-                                                    <i class="fas fa-trash-alt"></i>
-                                                </button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                    <?php endforeach; ?>
+                                            <?php echo htmlspecialchars($sub['category_name']); ?>
+                                        </span>
+                                    </td>
+                                    <td class="px-6 py-4 font-medium text-slate-700"><?php echo htmlspecialchars($sub['name']); ?></td>
+                                    <td class="px-6 py-4 text-right">
+                                        <button onclick="openSubcategoryModal('edit', <?php echo htmlspecialchars(json_encode($sub)); ?>)" class="text-blue-600 hover:text-blue-900 mx-1"><i class="fas fa-edit"></i></button>
+                                        <form method="POST" class="inline-block" onsubmit="return confirm('Устгах уу?');">
+                                            <input type="hidden" name="delete_subcategory" value="1">
+                                            <input type="hidden" name="id" value="<?php echo $sub['id']; ?>">
+                                            <button type="submit" class="text-red-600 hover:text-red-900 mx-1"><i class="fas fa-trash"></i></button>
+                                        </form>
+                                    </td>
+                                </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
 
+                <!-- 3. CHILD CATEGORIES SECTION -->
+                <div class="bg-white rounded-xl shadow-sm border border-slate-200 mb-8 overflow-hidden">
+                    <div class="px-6 py-4 border-b border-slate-200 flex justify-between items-center bg-gray-50">
+                        <h2 class="text-lg font-bold text-slate-800">Жижиг Ангилал (Child)</h2>
+                        <button onclick="openChildModal('add')" class="bg-teal-600 hover:bg-teal-700 text-white px-3 py-1.5 rounded text-sm font-medium flex items-center gap-2 transition">
+                            <i class="fas fa-plus"></i> Шинэ жижиг ангилал
+                        </button>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
+                                    <th class="px-6 py-3 font-semibold">Үндсэн > Дэд</th>
+                                    <th class="px-6 py-3 font-semibold">Жижиг Ангилал</th>
+                                    <th class="px-6 py-3 font-semibold text-right">Үйлдэл</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100">
+                                <?php foreach ($child_categories as $child): ?>
+                                <tr class="hover:bg-slate-50">
+                                    <td class="px-6 py-4 text-sm text-slate-500">
+                                        <?php echo htmlspecialchars($child['category_name']); ?> <i class="fas fa-angle-right text-xs mx-1"></i> <?php echo htmlspecialchars($child['subcategory_name']); ?>
+                                    </td>
+                                    <td class="px-6 py-4 font-medium text-slate-700"><?php echo htmlspecialchars($child['name']); ?></td>
+                                    <td class="px-6 py-4 text-right">
+                                        <button onclick="openChildModal('edit', <?php echo htmlspecialchars(json_encode($child)); ?>)" class="text-teal-600 hover:text-teal-900 mx-1"><i class="fas fa-edit"></i></button>
+                                        <form method="POST" class="inline-block" onsubmit="return confirm('Устгах уу?');">
+                                            <input type="hidden" name="delete_child_category" value="1">
+                                            <input type="hidden" name="id" value="<?php echo $child['id']; ?>">
+                                            <button type="submit" class="text-red-600 hover:text-red-900 mx-1"><i class="fas fa-trash"></i></button>
+                                        </form>
+                                    </td>
+                                </tr>
                                 <?php endforeach; ?>
                             </tbody>
                         </table>
@@ -230,66 +383,190 @@ $categories = [
             </main>
         </div>
     </div>
-    
-    <!-- Add/Edit Category Modal -->
+
+    <!-- 1. CATEGORY MODAL -->
     <div id="categoryModal" class="fixed inset-0 z-50 hidden overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
         <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-            <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" onclick="closeModal()"></div>
+            <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" onclick="closeModal('categoryModal')"></div>
             <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
             <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
-                <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-                    <h3 class="text-lg leading-6 font-medium text-gray-900" id="modalTitle">Ангилал нэмэх</h3>
-                    <div class="mt-4 space-y-4">
-                        <input type="hidden" id="catId">
-                        
-                        <!-- Name -->
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">Ангилалын нэр</label>
-                            <input type="text" id="catName" placeholder="Жишээ: Програм хангамж" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
-                        </div>
-
-                        <!-- Slug -->
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">Slug (URL)</label>
-                            <input type="text" id="catSlug" placeholder="Жишээ: software" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm bg-gray-50">
-                        </div>
-
-                        <!-- Parent Category Select -->
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">Үндсэн ангилал (Хамаарах)</label>
-                            <select id="catParent" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
-                                <option value="">-- Үндсэн ангилал (Main) --</option>
-                                <?php foreach ($categories as $pCat): ?>
-                                    <option value="<?php echo $pCat['id']; ?>"><?php echo $pCat['name']; ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                            <p class="mt-1 text-xs text-gray-500">Хэрэв дэд ангилал бол эндээс эцэг ангилалыг нь сонгоно уу.</p>
-                        </div>
-
-                        <!-- Icon (Only for Main categories really, but useful generally) -->
-                        <div id="iconGroup">
-                            <label class="block text-sm font-medium text-gray-700">Icon Class (FontAwesome)</label>
-                            <input type="text" id="catIcon" placeholder="fa-folder" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
-                        </div>
-
-                        <!-- Status -->
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">Төлөв</label>
-                            <select id="catStatus" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
-                                <option value="active">Идэвхтэй</option>
-                                <option value="inactive">Идэвхгүй</option>
-                            </select>
+                <form method="POST" action="">
+                    <input type="hidden" name="category_action" id="cat_action" value="add">
+                    <input type="hidden" name="id" id="cat_id">
+                    
+                    <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                        <h3 class="text-lg font-medium text-gray-900 mb-4" id="cat_modal_title">Шинэ ангилал</h3>
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Нэр</label>
+                                <input type="text" name="name" id="cat_name" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" required>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Slug (Англи)</label>
+                                <input type="text" name="slug" id="cat_slug" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" required>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Icon Class (FontAwesome)</label>
+                                <input type="text" name="icon_class" id="cat_icon" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" value="fas fa-folder">
+                                <p class="text-xs text-gray-500 mt-1">Жишээ: fas fa-book, fas fa-video</p>
+                            </div>
                         </div>
                     </div>
-                </div>
-                <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
-                    <button type="button" onclick="saveCategory()" class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-indigo-600 text-base font-medium text-white hover:bg-indigo-700 focus:outline-none sm:ml-3 sm:w-auto sm:text-sm">Хадгалах</button>
-                    <button type="button" onclick="closeModal()" class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">Болих</button>
-                </div>
+                    <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                        <button type="submit" class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-indigo-600 text-base font-medium text-white hover:bg-indigo-700 focus:outline-none sm:ml-3 sm:w-auto sm:text-sm">Хадгалах</button>
+                        <button type="button" onclick="closeModal('categoryModal')" class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">Болих</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. SUBCATEGORY MODAL -->
+    <div id="subcategoryModal" class="fixed inset-0 z-50 hidden overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+        <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" onclick="closeModal('subcategoryModal')"></div>
+            <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+            <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+                <form method="POST" action="">
+                    <input type="hidden" name="subcategory_action" id="sub_action" value="add">
+                    <input type="hidden" name="id" id="sub_id">
+                    
+                    <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                        <h3 class="text-lg font-medium text-gray-900 mb-4" id="sub_modal_title">Шинэ дэд ангилал</h3>
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Үндсэн ангилал</label>
+                                <select name="category_id" id="sub_cat_id" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" required>
+                                    <?php foreach ($categories as $cat): ?>
+                                        <option value="<?php echo $cat['id']; ?>"><?php echo htmlspecialchars($cat['name']); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Дэд ангиллын нэр</label>
+                                <input type="text" name="name" id="sub_name" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" required>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                        <button type="submit" class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none sm:ml-3 sm:w-auto sm:text-sm">Хадгалах</button>
+                        <button type="button" onclick="closeModal('subcategoryModal')" class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">Болих</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. CHILD CATEGORY MODAL -->
+    <div id="childModal" class="fixed inset-0 z-50 hidden overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+        <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" onclick="closeModal('childModal')"></div>
+            <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+            <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+                <form method="POST" action="">
+                    <input type="hidden" name="child_category_action" id="child_action" value="add">
+                    <input type="hidden" name="id" id="child_id">
+                    
+                    <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                        <h3 class="text-lg font-medium text-gray-900 mb-4" id="child_modal_title">Шинэ жижиг ангилал</h3>
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Дэд ангилал</label>
+                                <select name="subcategory_id" id="child_sub_id" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-teal-500 focus:border-teal-500 sm:text-sm" required>
+                                    <?php foreach ($subcategories as $sub): ?>
+                                        <option value="<?php echo $sub['id']; ?>"><?php echo htmlspecialchars($sub['category_name'] . ' > ' . $sub['name']); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Жижиг ангиллын нэр</label>
+                                <input type="text" name="name" id="child_name" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-teal-500 focus:border-teal-500 sm:text-sm" required>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                        <button type="submit" class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-teal-600 text-base font-medium text-white hover:bg-teal-700 focus:outline-none sm:ml-3 sm:w-auto sm:text-sm">Хадгалах</button>
+                        <button type="button" onclick="closeModal('childModal')" class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">Болих</button>
+                    </div>
+                </form>
             </div>
         </div>
     </div>
 
     <script src="js/script.js"></script>
+    <script>
+    // General Modal Functions
+    function closeModal(modalId) {
+        document.getElementById(modalId).classList.add('hidden');
+    }
+
+    // --- Category Modal ---
+    function openCategoryModal(action, data = null) {
+        const modal = document.getElementById('categoryModal');
+        const title = document.getElementById('cat_modal_title');
+        const actionInput = document.getElementById('cat_action');
+        
+        if (action === 'edit' && data) {
+            title.textContent = 'Ангилал засах';
+            actionInput.value = 'update';
+            document.getElementById('cat_id').value = data.id;
+            document.getElementById('cat_name').value = data.name;
+            document.getElementById('cat_slug').value = data.slug;
+            document.getElementById('cat_icon').value = data.icon_class;
+        } else {
+            title.textContent = 'Шинэ ангилал';
+            actionInput.value = 'add';
+            document.getElementById('cat_id').value = '';
+            document.getElementById('cat_name').value = '';
+            document.getElementById('cat_slug').value = '';
+            document.getElementById('cat_icon').value = 'fas fa-folder';
+        }
+        modal.classList.remove('hidden');
+    }
+
+    // --- Subcategory Modal ---
+    function openSubcategoryModal(action, data = null) {
+        const modal = document.getElementById('subcategoryModal');
+        const title = document.getElementById('sub_modal_title');
+        const actionInput = document.getElementById('sub_action');
+        
+        if (action === 'edit' && data) {
+            title.textContent = 'Дэд ангилал засах';
+            actionInput.value = 'update';
+            document.getElementById('sub_id').value = data.id;
+            document.getElementById('sub_cat_id').value = data.category_id;
+            document.getElementById('sub_name').value = data.name;
+        } else {
+            title.textContent = 'Шинэ дэд ангилал';
+            actionInput.value = 'add';
+            document.getElementById('sub_id').value = '';
+            document.getElementById('sub_cat_id').selectedIndex = 0;
+            document.getElementById('sub_name').value = '';
+        }
+        modal.classList.remove('hidden');
+    }
+
+    // --- Child Category Modal ---
+    function openChildModal(action, data = null) {
+        const modal = document.getElementById('childModal');
+        const title = document.getElementById('child_modal_title');
+        const actionInput = document.getElementById('child_action');
+        
+        if (action === 'edit' && data) {
+            title.textContent = 'Жижиг ангилал засах';
+            actionInput.value = 'update';
+            document.getElementById('child_id').value = data.id;
+            document.getElementById('child_sub_id').value = data.subcategory_id;
+            document.getElementById('child_name').value = data.name;
+        } else {
+            title.textContent = 'Шинэ жижиг ангилал';
+            actionInput.value = 'add';
+            document.getElementById('child_id').value = '';
+            document.getElementById('child_sub_id').selectedIndex = 0;
+            document.getElementById('child_name').value = '';
+        }
+        modal.classList.remove('hidden');
+    }
+    </script>
 </body>
 </html>

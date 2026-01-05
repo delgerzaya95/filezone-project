@@ -1,9 +1,78 @@
 <?php 
+// Database connection
+require_once 'includes/db.php';
+
 // Хуудасны гарчиг тохируулах (header.php дотор ашиглагдана)
 $page_title = "Нүүр хуудас - Filezone.mn";
 
 // Header оруулах
 include 'includes/header.php'; 
+
+// --- HELPER FUNCTIONS ---
+
+// Файлын төрлөөс хамаарч загвар авах
+function getFileStyle($type) {
+    switch ($type) {
+        case 'pdf': return ['color' => 'red', 'icon' => 'fas fa-file-pdf', 'bg' => 'bg-red-50', 'text' => 'text-red-600'];
+        case 'docx': 
+        case 'doc': return ['color' => 'blue', 'icon' => 'fas fa-file-word', 'bg' => 'bg-blue-50', 'text' => 'text-blue-600'];
+        case 'xlsx': 
+        case 'xls': return ['color' => 'green', 'icon' => 'fas fa-file-excel', 'bg' => 'bg-green-50', 'text' => 'text-green-600'];
+        case 'pptx': 
+        case 'ppt': return ['color' => 'orange', 'icon' => 'fas fa-file-powerpoint', 'bg' => 'bg-orange-50', 'text' => 'text-orange-600'];
+        case 'zip': 
+        case 'rar': return ['color' => 'yellow', 'icon' => 'fas fa-file-archive', 'bg' => 'bg-yellow-50', 'text' => 'text-yellow-600'];
+        default: return ['color' => 'gray', 'icon' => 'fas fa-file-alt', 'bg' => 'bg-gray-50', 'text' => 'text-gray-600'];
+    }
+}
+
+// --- DATA FETCHING ---
+
+// 1. Ангиллуудыг татах (Limit 5 items)
+$cat_stmt = $pdo->prepare("SELECT * FROM categories WHERE type = 'file' ORDER BY id ASC LIMIT 5");
+$cat_stmt->execute();
+$categories = $cat_stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Өнгөний сонголтууд (Visual effect for categories)
+$category_colors = ['blue', 'green', 'purple', 'orange', 'red', 'teal', 'indigo', 'pink'];
+
+// 2. Санал болгож буй үйлчилгээ (Featured Services - Top Rated or Newest)
+$serv_stmt = $pdo->prepare("
+    SELECT s.*, u.username, u.avatar_url, 
+    (SELECT AVG(rating) FROM service_reviews WHERE service_id = s.id) as avg_rating
+    FROM services s 
+    JOIN users u ON s.user_id = u.id 
+    WHERE s.status = 'active' 
+    ORDER BY s.rating_avg DESC, s.created_at DESC 
+    LIMIT 6
+");
+$serv_stmt->execute();
+$featured_services = $serv_stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// 3. Эрэлттэй файлууд (Trending - Most Downloaded)
+$trend_stmt = $pdo->prepare("
+    SELECT f.*, u.username 
+    FROM files f 
+    JOIN users u ON f.user_id = u.id 
+    WHERE f.status = 'approved' 
+    ORDER BY f.download_count DESC 
+    LIMIT 6
+");
+$trend_stmt->execute();
+$trending_files = $trend_stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// 4. Шинэ файлууд (New Files)
+$new_stmt = $pdo->prepare("
+    SELECT f.*, u.username 
+    FROM files f 
+    JOIN users u ON f.user_id = u.id 
+    WHERE f.status = 'approved' 
+    ORDER BY f.upload_date DESC 
+    LIMIT 8
+");
+$new_stmt->execute();
+$new_files = $new_stmt->fetchAll(PDO::FETCH_ASSOC);
+
 ?>
 
 <div class="flex flex-1 max-w-7xl mx-auto w-full">
@@ -41,9 +110,10 @@ include 'includes/header.php';
                 </p>
                 
                 <div class="flex flex-wrap justify-center gap-4">
-                    <button class="bg-white text-indigo-900 px-6 py-2.5 rounded-xl font-bold text-sm hover:bg-indigo-50 transition shadow-lg flex items-center transform hover:-translate-y-0.5">
+                    <!-- Search Button triggers Focus on Navbar Search (Optional UX) or goes to browse -->
+                    <a href="browse-files.php" class="bg-white text-indigo-900 px-6 py-2.5 rounded-xl font-bold text-sm hover:bg-indigo-50 transition shadow-lg flex items-center transform hover:-translate-y-0.5">
                         <i class="fas fa-search mr-2"></i> Хайх
-                    </button>
+                    </a>
                     <a href="upload.php" class="bg-gradient-to-r from-orange-500 to-red-500 text-white border border-transparent px-6 py-2.5 rounded-xl font-bold text-sm transition shadow-lg shadow-orange-500/30 flex items-center transform hover:-translate-y-0.5 btn-shine">
                         <i class="fas fa-plus mr-2"></i> Файл зарах
                     </a>
@@ -51,56 +121,42 @@ include 'includes/header.php';
             </div>
         </div>
 
-        <!-- NEW: Visual Categories (Browse by Type) -->
+        <!-- DYNAMIC: Visual Categories (Browse by Type) -->
         <div class="mx-4 lg:mx-0 mb-10">
             <h2 class="text-sm font-bold text-gray-500 uppercase tracking-wider mb-4">Төрлөөр хайх</h2>
             <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-                <!-- Category Item -->
-                <a href="browse-files.php?cat=contracts" class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm hover:shadow-md hover:border-brand-200 transition text-center group">
-                    <div class="w-10 h-10 mx-auto bg-blue-50 rounded-full flex items-center justify-center text-blue-600 mb-2 group-hover:scale-110 transition">
-                        <i class="fas fa-file-contract text-lg"></i>
-                    </div>
-                    <span class="text-xs font-bold text-gray-700">Гэрээ & Загвар</span>
-                </a>
-                <!-- Category Item -->
-                <a href="browse-files.php?cat=education" class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm hover:shadow-md hover:border-brand-200 transition text-center group">
-                    <div class="w-10 h-10 mx-auto bg-green-50 rounded-full flex items-center justify-center text-green-600 mb-2 group-hover:scale-110 transition">
-                        <i class="fas fa-graduation-cap text-lg"></i>
-                    </div>
-                    <span class="text-xs font-bold text-gray-700">Диплом & Курс</span>
-                </a>
-                <!-- Category Item -->
-                <a href="browse-files.php?cat=books" class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm hover:shadow-md hover:border-brand-200 transition text-center group">
-                    <div class="w-10 h-10 mx-auto bg-purple-50 rounded-full flex items-center justify-center text-purple-600 mb-2 group-hover:scale-110 transition">
-                        <i class="fas fa-book text-lg"></i>
-                    </div>
-                    <span class="text-xs font-bold text-gray-700">Ном & Товхимол</span>
-                </a>
-                <!-- Category Item -->
-                <a href="browse-files.php?cat=design" class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm hover:shadow-md hover:border-brand-200 transition text-center group">
-                    <div class="w-10 h-10 mx-auto bg-orange-50 rounded-full flex items-center justify-center text-orange-600 mb-2 group-hover:scale-110 transition">
-                        <i class="fas fa-palette text-lg"></i>
-                    </div>
-                    <span class="text-xs font-bold text-gray-700">Дизайн & Лого</span>
-                </a>
-                <!-- Category Item -->
-                <a href="browse-files.php?cat=finance" class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm hover:shadow-md hover:border-brand-200 transition text-center group">
-                    <div class="w-10 h-10 mx-auto bg-red-50 rounded-full flex items-center justify-center text-red-600 mb-2 group-hover:scale-110 transition">
-                        <i class="fas fa-calculator text-lg"></i>
-                    </div>
-                    <span class="text-xs font-bold text-gray-700">Санхүү & Excel</span>
-                </a>
-                <!-- Category Item -->
-                <a href="categories.php" class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm hover:shadow-md hover:border-brand-200 transition text-center group">
-                    <div class="w-10 h-10 mx-auto bg-gray-50 rounded-full flex items-center justify-center text-gray-600 mb-2 group-hover:scale-110 transition">
+                
+                <?php if (!empty($categories)): ?>
+                    <?php foreach ($categories as $index => $cat): ?>
+                        <?php 
+                            // Өнгө сонгох (Cycle through colors)
+                            $color = $category_colors[$index % count($category_colors)];
+                        ?>
+                        <!-- Category Item -->
+                        <a href="browse-files.php?cat=<?php echo htmlspecialchars($cat['slug']); ?>" class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm hover:shadow-md hover:border-<?php echo $color; ?>-200 transition text-center group h-full flex flex-col justify-center items-center">
+                            <div class="w-10 h-10 mx-auto bg-<?php echo $color; ?>-50 rounded-full flex items-center justify-center text-<?php echo $color; ?>-600 mb-2 group-hover:scale-110 transition">
+                                <i class="<?php echo htmlspecialchars($cat['icon_class'] ?? 'fas fa-folder'); ?> text-lg"></i>
+                            </div>
+                            <span class="text-xs font-bold text-gray-700 line-clamp-2 leading-tight"><?php echo htmlspecialchars($cat['name']); ?></span>
+                        </a>
+                    <?php endforeach; ?>
+                <?php else: ?>
+                    <p class="text-gray-500 text-sm col-span-full">Ангилал олдсонгүй.</p>
+                <?php endif; ?>
+
+                <!-- "See All" Static Item -->
+                <a href="categories.php" class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm hover:shadow-md hover:border-gray-300 transition text-center group h-full flex flex-col justify-center items-center">
+                    <div class="w-10 h-10 mx-auto bg-gray-100 rounded-full flex items-center justify-center text-gray-600 mb-2 group-hover:scale-110 transition">
                         <i class="fas fa-th-large text-lg"></i>
                     </div>
                     <span class="text-xs font-bold text-gray-700">Бүгдийг харах</span>
                 </a>
+
             </div>
         </div>
 
-        <!-- SECTION: SERVICES -->
+        <!-- SECTION: FEATURED SERVICES (DB FETCHED) -->
+        <?php if (!empty($featured_services)): ?>
         <div class="mb-10 mx-4 lg:mx-0">
             <div class="flex items-center justify-between mb-4">
                 <h2 class="text-lg font-bold text-gray-900 flex items-center gap-2">
@@ -110,137 +166,47 @@ include 'includes/header.php';
                 <a href="services.php" class="text-sm font-medium text-brand-600 hover:text-brand-700">Бүгд &rarr;</a>
             </div>
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                <!-- Service Card 1 -->
-                <div class="bg-white rounded-xl border border-gray-200 overflow-hidden hover:shadow-lg transition-all duration-300 group service-card">
-                    <div class="h-36 bg-gray-200 relative overflow-hidden">
-                        <img src="https://images.unsplash.com/photo-1558655146-d09347e92766?ixlib=rb-1.2.1&auto=format&fit=crop&w=800&q=80" alt="Service" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
-                        <div class="absolute top-2 right-2 bg-white/90 backdrop-blur px-2 py-0.5 rounded text-xs font-bold text-gray-700 shadow-sm">
-                            <i class="fas fa-clock text-gray-400 text-[10px] mr-1"></i> 2 хоног
-                        </div>
-                    </div>
-                    <div class="p-4 pt-2 relative">
-                        <div class="flex justify-between items-start">
-                            <img src="assets/avatars/default.png" class="w-10 h-10 rounded-full border-2 border-white bg-gray-100 -mt-7 object-cover shadow-sm">
-                            <div class="text-right">
-                                <span class="block text-green-600 font-bold text-lg">30,000₮</span>
+                
+                <?php foreach($featured_services as $srv): ?>
+                    <?php 
+                        $image = !empty($srv['cover_image']) ? htmlspecialchars($srv['cover_image']) : 'assets/images/service-placeholder.jpg';
+                        $avatar = !empty($srv['avatar_url']) ? htmlspecialchars($srv['avatar_url']) : 'assets/images/default-avatar.png';
+                        
+                        // Delivery time text
+                        $unit_map = ['hour' => 'цаг', 'day' => 'хоног', 'week' => 'долоо хоног', 'month' => 'сар'];
+                        $time_text = $srv['delivery_time'] . ' ' . ($unit_map[$srv['delivery_unit']] ?? $srv['delivery_unit']);
+                        $price_display = number_format($srv['price_min']) . '₮';
+                    ?>
+                    <!-- Service Card -->
+                    <div class="bg-white rounded-xl border border-gray-200 overflow-hidden hover:shadow-lg transition-all duration-300 group service-card">
+                        <div class="h-36 bg-gray-200 relative overflow-hidden">
+                            <img src="<?php echo $image; ?>" alt="Service" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
+                            <div class="absolute top-2 right-2 bg-white/90 backdrop-blur px-2 py-0.5 rounded text-xs font-bold text-gray-700 shadow-sm">
+                                <i class="fas fa-clock text-gray-400 text-[10px] mr-1"></i> <?php echo $time_text; ?>
                             </div>
                         </div>
-                        <h3 class="font-bold text-gray-800 mt-2 line-clamp-2 text-sm h-10 leading-relaxed group-hover:text-brand-600 transition-colors">
-                            Мэргэжлийн түвшинд CV болон Resume янзалж өгнө
-                        </h3>
-                        <div class="service-action absolute inset-x-0 bottom-0 p-4 bg-white/95 backdrop-blur opacity-0 translate-y-2 transition-all duration-300 flex items-center justify-center">
-                            <a href="service-details.php" class="w-full bg-brand-600 text-white text-center py-2 rounded-lg font-medium text-sm hover:bg-brand-700 shadow-lg shadow-brand-500/20">
-                                Захиалах
-                            </a>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Service Card 2 -->
-                <div class="bg-white rounded-xl border border-gray-200 overflow-hidden hover:shadow-lg transition-all duration-300 group service-card">
-                    <div class="h-36 bg-gray-200 relative overflow-hidden">
-                        <img src="https://images.unsplash.com/photo-1542744173-8e7e53415bb0?ixlib=rb-1.2.1&auto=format&fit=crop&w=800&q=80" alt="Service" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
-                        <div class="absolute top-2 right-2 bg-white/90 backdrop-blur px-2 py-0.5 rounded text-xs font-bold text-gray-700 shadow-sm">
-                            <i class="fas fa-clock text-gray-400 text-[10px] mr-1"></i> 1 хоног
-                        </div>
-                    </div>
-                    <div class="p-4 pt-2 relative">
-                        <div class="flex justify-between items-start">
-                            <img src="assets/avatars/default.png" class="w-10 h-10 rounded-full border-2 border-white bg-gray-100 -mt-7 object-cover shadow-sm">
-                            <div class="text-right">
-                                <span class="block text-green-600 font-bold text-lg">15,000₮</span>
+                        <div class="p-4 pt-2 relative">
+                            <div class="flex justify-between items-start">
+                                <img src="<?php echo $avatar; ?>" class="w-10 h-10 rounded-full border-2 border-white bg-gray-100 -mt-7 object-cover shadow-sm">
+                                <div class="text-right">
+                                    <span class="block text-green-600 font-bold text-lg"><?php echo $price_display; ?></span>
+                                </div>
+                            </div>
+                            <h3 class="font-bold text-gray-800 mt-2 line-clamp-2 text-sm h-10 leading-relaxed group-hover:text-brand-600 transition-colors">
+                                <a href="service-details.php?id=<?php echo $srv['id']; ?>">
+                                    <?php echo htmlspecialchars($srv['title']); ?>
+                                </a>
+                            </h3>
+                            <div class="service-action absolute inset-x-0 bottom-0 p-4 bg-white/95 backdrop-blur opacity-0 translate-y-2 transition-all duration-300 flex items-center justify-center">
+                                <a href="service-details.php?id=<?php echo $srv['id']; ?>" class="w-full bg-brand-600 text-white text-center py-2 rounded-lg font-medium text-sm hover:bg-brand-700 shadow-lg shadow-brand-500/20">
+                                    Дэлгэрэнгүй
+                                </a>
                             </div>
                         </div>
-                        <h3 class="font-bold text-gray-800 mt-2 line-clamp-2 text-sm h-10 leading-relaxed group-hover:text-brand-600 transition-colors">
-                            Англи хэлнээс Монгол хэл рүү текст орчуулна
-                        </h3>
-                        <div class="service-action absolute inset-x-0 bottom-0 p-4 bg-white/95 backdrop-blur opacity-0 translate-y-2 transition-all duration-300 flex items-center justify-center">
-                            <a href="service-details.php" class="w-full bg-brand-600 text-white text-center py-2 rounded-lg font-medium text-sm hover:bg-brand-700 shadow-lg shadow-brand-500/20">
-                                Захиалах
-                            </a>
-                        </div>
                     </div>
-                </div>
+                <?php endforeach; ?>
 
-                <!-- Service Card 3 (Logo) -->
-                <div class="bg-white rounded-xl border border-gray-200 overflow-hidden hover:shadow-lg transition-all duration-300 group service-card">
-                    <div class="h-36 bg-gray-200 relative overflow-hidden">
-                        <img src="https://images.unsplash.com/photo-1626785774573-4b7993125651?ixlib=rb-1.2.1&auto=format&fit=crop&w=800&q=80" alt="Service" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
-                        <div class="absolute top-2 right-2 bg-white/90 backdrop-blur px-2 py-0.5 rounded text-xs font-bold text-gray-700 shadow-sm">
-                            <i class="fas fa-clock text-gray-400 text-[10px] mr-1"></i> 3 хоног
-                        </div>
-                    </div>
-                    <div class="p-4 pt-2 relative">
-                        <div class="flex justify-between items-start">
-                            <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=Felix" class="w-10 h-10 rounded-full border-2 border-white bg-gray-100 -mt-7 object-cover shadow-sm">
-                            <div class="text-right">
-                                <span class="block text-green-600 font-bold text-lg">50,000₮</span>
-                            </div>
-                        </div>
-                        <h3 class="font-bold text-gray-800 mt-2 line-clamp-2 text-sm h-10 leading-relaxed group-hover:text-brand-600 transition-colors">
-                            Компанийн лого болон брэндбүүк хийнэ
-                        </h3>
-                        <div class="service-action absolute inset-x-0 bottom-0 p-4 bg-white/95 backdrop-blur opacity-0 translate-y-2 transition-all duration-300 flex items-center justify-center">
-                            <a href="service-details.php" class="w-full bg-brand-600 text-white text-center py-2 rounded-lg font-medium text-sm hover:bg-brand-700 shadow-lg shadow-brand-500/20">
-                                Захиалах
-                            </a>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Service Card 4 (Web) -->
-                <div class="bg-white rounded-xl border border-gray-200 overflow-hidden hover:shadow-lg transition-all duration-300 group service-card">
-                    <div class="h-36 bg-gray-200 relative overflow-hidden">
-                        <img src="https://images.unsplash.com/photo-1498050108023-c5249f4df085?ixlib=rb-1.2.1&auto=format&fit=crop&w=800&q=80" alt="Service" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
-                        <div class="absolute top-2 right-2 bg-white/90 backdrop-blur px-2 py-0.5 rounded text-xs font-bold text-gray-700 shadow-sm">
-                            <i class="fas fa-clock text-gray-400 text-[10px] mr-1"></i> 5 хоног
-                        </div>
-                    </div>
-                    <div class="p-4 pt-2 relative">
-                        <div class="flex justify-between items-start">
-                            <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=Aneka" class="w-10 h-10 rounded-full border-2 border-white bg-gray-100 -mt-7 object-cover shadow-sm">
-                            <div class="text-right">
-                                <span class="block text-green-600 font-bold text-lg">250,000₮</span>
-                            </div>
-                        </div>
-                        <h3 class="font-bold text-gray-800 mt-2 line-clamp-2 text-sm h-10 leading-relaxed group-hover:text-brand-600 transition-colors">
-                            Танилцуулга вебсайт хурдан хийж өгнө
-                        </h3>
-                        <div class="service-action absolute inset-x-0 bottom-0 p-4 bg-white/95 backdrop-blur opacity-0 translate-y-2 transition-all duration-300 flex items-center justify-center">
-                            <a href="service-details.php" class="w-full bg-brand-600 text-white text-center py-2 rounded-lg font-medium text-sm hover:bg-brand-700 shadow-lg shadow-brand-500/20">
-                                Захиалах
-                            </a>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Service Card 5 (Social) -->
-                <div class="bg-white rounded-xl border border-gray-200 overflow-hidden hover:shadow-lg transition-all duration-300 group service-card">
-                    <div class="h-36 bg-gray-200 relative overflow-hidden">
-                        <img src="https://images.unsplash.com/photo-1611162617474-5b21e879e113?ixlib=rb-1.2.1&auto=format&fit=crop&w=800&q=80" alt="Service" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
-                        <div class="absolute top-2 right-2 bg-white/90 backdrop-blur px-2 py-0.5 rounded text-xs font-bold text-gray-700 shadow-sm">
-                            <i class="fas fa-clock text-gray-400 text-[10px] mr-1"></i> 1 хоног
-                        </div>
-                    </div>
-                    <div class="p-4 pt-2 relative">
-                        <div class="flex justify-between items-start">
-                            <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=John" class="w-10 h-10 rounded-full border-2 border-white bg-gray-100 -mt-7 object-cover shadow-sm">
-                            <div class="text-right">
-                                <span class="block text-green-600 font-bold text-lg">15,000₮</span>
-                            </div>
-                        </div>
-                        <h3 class="font-bold text-gray-800 mt-2 line-clamp-2 text-sm h-10 leading-relaxed group-hover:text-brand-600 transition-colors">
-                            Сошиал медиа постер дизайн
-                        </h3>
-                        <div class="service-action absolute inset-x-0 bottom-0 p-4 bg-white/95 backdrop-blur opacity-0 translate-y-2 transition-all duration-300 flex items-center justify-center">
-                            <a href="service-details.php" class="w-full bg-brand-600 text-white text-center py-2 rounded-lg font-medium text-sm hover:bg-brand-700 shadow-lg shadow-brand-500/20">
-                                Захиалах
-                            </a>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Add Service Promo (Existing but updated visually) -->
+                <!-- Add Service Promo (Static) -->
                 <div class="bg-gray-50 border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center text-center p-6 hover:border-brand-500 hover:bg-brand-50 transition cursor-pointer group h-full min-h-[250px]">
                     <div class="w-16 h-16 bg-white rounded-full flex items-center justify-center mb-4 shadow-sm group-hover:scale-110 transition duration-300">
                         <i class="fas fa-plus text-2xl text-brand-600"></i>
@@ -253,106 +219,59 @@ include 'includes/header.php';
                 </div>
             </div>
         </div>
+        <?php endif; ?>
 
-        <!-- NEW: TRENDING / POPULAR FILES -->
-        <!-- Онцлох болон Хамгийн их татагдсан хэсэг -->
-        <div class="mb-10 mx-4 lg:mx-0">
+        <!-- TRENDING FILES (Most Downloaded from DB) -->
+        <?php if (!empty($trending_files)): ?>
+        <div class="mx-4 lg:mx-0 mb-16">
             <div class="flex items-center justify-between mb-4">
                 <h2 class="text-lg font-bold text-gray-900 flex items-center gap-2">
                     <i class="fas fa-fire text-orange-500"></i>
-                    Эрэлттэй файлууд (Trending)
+                    Хамгийн их татагдсан
                 </h2>
+                <a href="browse-files.php?sort=popular" class="text-sm font-medium text-brand-600 hover:text-brand-700">Бүгд &rarr;</a>
             </div>
 
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                <!-- Trending Item 1 -->
-                <div class="bg-white p-4 rounded-xl border border-orange-100 shadow-sm relative overflow-hidden hover:shadow-md transition">
-                    <div class="absolute top-0 right-0 bg-orange-500 text-white text-[10px] font-bold px-2 py-1 rounded-bl-lg">TOP 1</div>
-                    <div class="flex gap-4">
-                        <div class="w-12 h-12 bg-red-50 text-red-600 rounded-lg flex items-center justify-center flex-shrink-0">
-                            <i class="fas fa-file-pdf text-xl"></i>
-                        </div>
-                        <div>
-                            <h3 class="font-bold text-gray-800 text-sm line-clamp-1 hover:text-orange-600 cursor-pointer">Байгууллагын хөдөлмөрийн гэрээ</h3>
-                            <p class="text-xs text-gray-500 mb-2">Lawyer_mn • 2.5k татсан</p>
-                            <span class="text-brand-600 font-bold text-sm">5,000₮</span>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Trending Item 2 -->
-                <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden hover:shadow-md transition">
-                    <div class="flex gap-4">
-                        <div class="w-12 h-12 bg-blue-50 text-blue-600 rounded-lg flex items-center justify-center flex-shrink-0">
-                            <i class="fas fa-file-word text-xl"></i>
-                        </div>
-                        <div>
-                            <h3 class="font-bold text-gray-800 text-sm line-clamp-1 hover:text-orange-600 cursor-pointer">Тайлангийн загвар (Excel)</h3>
-                            <p class="text-xs text-gray-500 mb-2">Accountant • 1.2k татсан</p>
-                            <span class="text-brand-600 font-bold text-sm">15,000₮</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Trending Item 3 -->
-                <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden hover:shadow-md transition">
-                    <div class="flex gap-4">
-                        <div class="w-12 h-12 bg-yellow-50 text-yellow-600 rounded-lg flex items-center justify-center flex-shrink-0">
-                            <i class="fas fa-file-powerpoint text-xl"></i>
-                        </div>
-                        <div>
-                            <h3 class="font-bold text-gray-800 text-sm line-clamp-1 hover:text-orange-600 cursor-pointer">Бизнес төлөвлөгөө PPT</h3>
-                            <p class="text-xs text-gray-500 mb-2">Startup MN • 980 татсан</p>
-                            <span class="text-brand-600 font-bold text-sm">8,000₮</span>
+                <?php foreach($trending_files as $index => $file): ?>
+                    <?php 
+                        $style = getFileStyle($file['file_type']);
+                        $rank = $index + 1;
+                        $rankColor = $index == 0 ? 'bg-orange-500' : ($index == 1 ? 'bg-gray-400' : ($index == 2 ? 'bg-yellow-600' : 'bg-gray-300'));
+                        $price_display = $file['price'] == 0 ? 'Үнэгүй' : number_format($file['price']) . '₮';
+                    ?>
+                    <!-- Trending Item -->
+                    <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden hover:shadow-md transition">
+                        <div class="absolute top-0 right-0 <?php echo $rankColor; ?> text-white text-[10px] font-bold px-2 py-1 rounded-bl-lg">TOP <?php echo $rank; ?></div>
+                        <div class="flex gap-4">
+                            <div class="w-12 h-12 <?php echo $style['bg'] . ' ' . $style['text']; ?> rounded-lg flex items-center justify-center flex-shrink-0">
+                                <i class="<?php echo $style['icon']; ?> text-xl"></i>
+                            </div>
+                            <div class="min-w-0 flex-1">
+                                <h3 class="font-bold text-gray-800 text-sm line-clamp-1 hover:text-orange-600 cursor-pointer">
+                                    <a href="file-details.php?id=<?php echo $file['id']; ?>"><?php echo htmlspecialchars($file['title']); ?></a>
+                                </h3>
+                                <p class="text-xs text-gray-500 mb-2 truncate">
+                                    <?php echo htmlspecialchars($file['username']); ?> • <?php echo number_format($file['download_count']); ?> татсан
+                                </p>
+                                <div class="flex justify-between items-center">
+                                    <span class="text-brand-600 font-bold text-sm">
+                                        <?php echo $price_display; ?>
+                                    </span>
+                                    <a href="file-details.php?id=<?php echo $file['id']; ?>" class="text-gray-400 hover:text-brand-600 transition-colors p-1" title="Дэлгэрэнгүй үзэх">
+                                        <i class="fas fa-arrow-right"></i>
+                                    </a>
+                                </div>
+                            </div>
                         </div>
                     </div>
-                </div>
-
-                <!-- Trending Item 4 (NEW) -->
-                <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden hover:shadow-md transition">
-                    <div class="flex gap-4">
-                        <div class="w-12 h-12 bg-purple-50 text-purple-600 rounded-lg flex items-center justify-center flex-shrink-0">
-                            <i class="fas fa-file-contract text-xl"></i>
-                        </div>
-                        <div>
-                            <h3 class="font-bold text-gray-800 text-sm line-clamp-1 hover:text-orange-600 cursor-pointer">Уул уурхайн гэрээний загвар</h3>
-                            <p class="text-xs text-gray-500 mb-2">MiningExpert • 850 татсан</p>
-                            <span class="text-brand-600 font-bold text-sm">20,000₮</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Trending Item 5 (NEW) -->
-                <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden hover:shadow-md transition">
-                    <div class="flex gap-4">
-                        <div class="w-12 h-12 bg-green-50 text-green-600 rounded-lg flex items-center justify-center flex-shrink-0">
-                            <i class="fas fa-book text-xl"></i>
-                        </div>
-                        <div>
-                            <h3 class="font-bold text-gray-800 text-sm line-clamp-1 hover:text-orange-600 cursor-pointer">IELTS бэлтгэлийн ном (PDF)</h3>
-                            <p class="text-xs text-gray-500 mb-2">EnglishCenter • 1.5k татсан</p>
-                            <span class="text-brand-600 font-bold text-sm">10,000₮</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Trending Item 6 (NEW) -->
-                <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden hover:shadow-md transition">
-                    <div class="flex gap-4">
-                        <div class="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-lg flex items-center justify-center flex-shrink-0">
-                            <i class="fas fa-calculator text-xl"></i>
-                        </div>
-                        <div>
-                            <h3 class="font-bold text-gray-800 text-sm line-clamp-1 hover:text-orange-600 cursor-pointer">Барилгын төсөв тооцох файл</h3>
-                            <p class="text-xs text-gray-500 mb-2">BarilgaProject • 700 татсан</p>
-                            <span class="text-brand-600 font-bold text-sm">25,000₮</span>
-                        </div>
-                    </div>
-                </div>
+                <?php endforeach; ?>
             </div>
         </div>
+        <?php endif; ?>
 
-        <!-- NEW FILES -->
+        <!-- NEW FILES (DB Fetched) -->
+        <?php if (!empty($new_files)): ?>
         <div class="mx-4 lg:mx-0 mb-10">
             <div class="flex items-center justify-between mb-4">
                 <h2 class="text-lg font-bold text-gray-900 flex items-center gap-2">
@@ -363,300 +282,47 @@ include 'includes/header.php';
             </div>
 
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <!-- File Card 1 -->
-                <div class="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-md transition-shadow group relative">
-                    <div class="flex items-start justify-between mb-3">
-                        <div class="w-10 h-10 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center text-xl">
-                            <i class="fas fa-file-word"></i>
+                <?php foreach($new_files as $file): ?>
+                    <?php 
+                        $style = getFileStyle($file['file_type']);
+                        $price_display = $file['price'] == 0 ? 'Үнэгүй' : number_format($file['price']) . '₮';
+                        $price_class = $file['price'] == 0 ? 'text-green-600' : '';
+                    ?>
+                    <!-- File Card -->
+                    <div class="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-md transition-shadow group relative">
+                        <div class="flex items-start justify-between mb-3">
+                            <div class="w-10 h-10 rounded-lg <?php echo $style['bg'] . ' ' . $style['text']; ?> flex items-center justify-center text-xl">
+                                <i class="<?php echo $style['icon']; ?>"></i>
+                            </div>
+                            <span class="bg-gray-100 text-gray-600 text-xs font-medium px-2 py-1 rounded uppercase"><?php echo htmlspecialchars($file['file_type']); ?></span>
                         </div>
-                        <span class="bg-gray-100 text-gray-600 text-xs font-medium px-2 py-1 rounded">DOCX</span>
-                    </div>
-                    <h3 class="font-semibold text-gray-900 mb-1 line-clamp-2 group-hover:text-brand-600 transition-colors text-sm">
-                        Дадлагын тайлангийн жишээ загвар
-                    </h3>
-                    <div class="flex items-center gap-2 text-xs text-gray-500 mb-3">
-                        <span><i class="fas fa-download mr-1"></i> 20</span>
-                        <span>•</span>
-                        <span>Student123</span>
-                    </div>
-                    <div class="flex items-center justify-between pt-3 border-t border-gray-50">
-                        <span class="font-bold text-gray-900">3,000₮</span>
-                        <button class="text-gray-400 hover:text-brand-600 transition-colors">
-                            <i class="fas fa-shopping-cart"></i>
-                        </button>
-                    </div>
-                </div>
-
-                <!-- File Card 2 -->
-                <div class="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-md transition-shadow group relative">
-                    <div class="flex items-start justify-between mb-3">
-                        <div class="w-10 h-10 rounded-lg bg-green-50 text-green-600 flex items-center justify-center text-xl">
-                            <i class="fas fa-file-excel"></i>
+                        <h3 class="font-semibold text-gray-900 mb-1 line-clamp-2 group-hover:text-brand-600 transition-colors text-sm min-h-[40px]">
+                            <a href="file-details.php?id=<?php echo $file['id']; ?>">
+                                <?php echo htmlspecialchars($file['title']); ?>
+                            </a>
+                        </h3>
+                        <div class="flex items-center gap-2 text-xs text-gray-500 mb-3">
+                            <span><i class="fas fa-download mr-1"></i> <?php echo $file['download_count']; ?></span>
+                            <span>•</span>
+                            <span class="truncate max-w-[80px]"><?php echo htmlspecialchars($file['username']); ?></span>
                         </div>
-                        <span class="bg-gray-100 text-gray-600 text-xs font-medium px-2 py-1 rounded">XLSX</span>
-                    </div>
-                    <h3 class="font-semibold text-gray-900 mb-1 line-clamp-2 group-hover:text-brand-600 transition-colors text-sm">
-                        Сошиал контент төлөвлөгөө (Calendar)
-                    </h3>
-                    <div class="flex items-center gap-2 text-xs text-gray-500 mb-3">
-                        <span><i class="fas fa-download mr-1"></i> 45</span>
-                        <span>•</span>
-                        <span>Marketer_B</span>
-                    </div>
-                    <div class="flex items-center justify-between pt-3 border-t border-gray-50">
-                        <span class="text-green-600 font-bold text-sm bg-green-50 px-2 py-0.5 rounded">Үнэгүй</span>
-                        <button class="text-gray-400 hover:text-brand-600 transition-colors">
-                            <i class="fas fa-download"></i>
-                        </button>
-                    </div>
-                </div>
-
-                <!-- File Card 3 -->
-                <div class="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-md transition-shadow group relative">
-                    <div class="flex items-start justify-between mb-3">
-                        <div class="w-10 h-10 rounded-lg bg-yellow-50 text-yellow-600 flex items-center justify-center text-xl">
-                            <i class="fas fa-file-contract"></i>
+                        <div class="flex items-center justify-between pt-3 border-t border-gray-50">
+                            <span class="font-bold text-gray-900 text-sm <?php echo $price_class; ?>">
+                                <?php echo $price_display; ?>
+                            </span>
+                            
+                            <!-- Replaced Cart Button with Details Button -->
+                            <a href="file-details.php?id=<?php echo $file['id']; ?>" class="text-gray-400 hover:text-brand-600 transition-colors p-1" title="Дэлгэрэнгүй үзэх">
+                                <i class="fas fa-arrow-right"></i>
+                            </a>
                         </div>
-                        <span class="bg-gray-100 text-gray-600 text-xs font-medium px-2 py-1 rounded">DOCX</span>
                     </div>
-                    <h3 class="font-semibold text-gray-900 mb-1 line-clamp-2 group-hover:text-brand-600 transition-colors text-sm">
-                        Үл хөдлөх хөрөнгө худалдах гэрээ
-                    </h3>
-                    <div class="flex items-center gap-2 text-xs text-gray-500 mb-3">
-                        <span><i class="fas fa-download mr-1"></i> 12</span>
-                        <span>•</span>
-                        <span>Agent007</span>
-                    </div>
-                    <div class="flex items-center justify-between pt-3 border-t border-gray-50">
-                        <span class="font-bold text-gray-900">8,000₮</span>
-                        <button class="text-gray-400 hover:text-brand-600 transition-colors">
-                            <i class="fas fa-shopping-cart"></i>
-                        </button>
-                    </div>
-                </div>
-
-                <!-- File Card 4 -->
-                <div class="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-md transition-shadow group relative">
-                    <div class="flex items-start justify-between mb-3">
-                        <div class="w-10 h-10 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center text-xl">
-                            <i class="fas fa-file-code"></i>
-                        </div>
-                        <span class="bg-gray-100 text-gray-600 text-xs font-medium px-2 py-1 rounded">PDF</span>
-                    </div>
-                    <h3 class="font-semibold text-gray-900 mb-1 line-clamp-2 group-hover:text-brand-600 transition-colors text-sm">
-                        Python хэлний анхан шатны гарын авлага
-                    </h3>
-                    <div class="flex items-center gap-2 text-xs text-gray-500 mb-3">
-                        <span><i class="fas fa-download mr-1"></i> 34</span>
-                        <span>•</span>
-                        <span>CoderBag</span>
-                    </div>
-                    <div class="flex items-center justify-between pt-3 border-t border-gray-50">
-                        <span class="font-bold text-gray-900">5,000₮</span>
-                        <button class="text-gray-400 hover:text-brand-600 transition-colors">
-                            <i class="fas fa-shopping-cart"></i>
-                        </button>
-                    </div>
-                </div>
-
-                <!-- File Card 5 -->
-                <div class="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-md transition-shadow group relative">
-                    <div class="flex items-start justify-between mb-3">
-                        <div class="w-10 h-10 rounded-lg bg-orange-50 text-orange-600 flex items-center justify-center text-xl">
-                            <i class="fas fa-file-powerpoint"></i>
-                        </div>
-                        <span class="bg-gray-100 text-gray-600 text-xs font-medium px-2 py-1 rounded">PPTX</span>
-                    </div>
-                    <h3 class="font-semibold text-gray-900 mb-1 line-clamp-2 group-hover:text-brand-600 transition-colors text-sm">
-                        Байгууллагын танилцуулга PPT
-                    </h3>
-                    <div class="flex items-center gap-2 text-xs text-gray-500 mb-3">
-                        <span><i class="fas fa-download mr-1"></i> 56</span>
-                        <span>•</span>
-                        <span>BizGuru</span>
-                    </div>
-                    <div class="flex items-center justify-between pt-3 border-t border-gray-50">
-                        <span class="font-bold text-gray-900">15,000₮</span>
-                        <button class="text-gray-400 hover:text-brand-600 transition-colors">
-                            <i class="fas fa-shopping-cart"></i>
-                        </button>
-                    </div>
-                </div>
-
-                <!-- File Card 6 -->
-                <div class="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-md transition-shadow group relative">
-                    <div class="flex items-start justify-between mb-3">
-                        <div class="w-10 h-10 rounded-lg bg-green-50 text-green-600 flex items-center justify-center text-xl">
-                            <i class="fas fa-file-excel"></i>
-                        </div>
-                        <span class="bg-gray-100 text-gray-600 text-xs font-medium px-2 py-1 rounded">XLSX</span>
-                    </div>
-                    <h3 class="font-semibold text-gray-900 mb-1 line-clamp-2 group-hover:text-brand-600 transition-colors text-sm">
-                        Төслийн менежментийн загвар
-                    </h3>
-                    <div class="flex items-center gap-2 text-xs text-gray-500 mb-3">
-                        <span><i class="fas fa-download mr-1"></i> 18</span>
-                        <span>•</span>
-                        <span>PM_Expert</span>
-                    </div>
-                    <div class="flex items-center justify-between pt-3 border-t border-gray-50">
-                        <span class="font-bold text-gray-900">20,000₮</span>
-                        <button class="text-gray-400 hover:text-brand-600 transition-colors">
-                            <i class="fas fa-shopping-cart"></i>
-                        </button>
-                    </div>
-                </div>
-
-                <!-- File Card 7 -->
-                <div class="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-md transition-shadow group relative">
-                    <div class="flex items-start justify-between mb-3">
-                        <div class="w-10 h-10 rounded-lg bg-red-50 text-red-600 flex items-center justify-center text-xl">
-                            <i class="fas fa-book"></i>
-                        </div>
-                        <span class="bg-gray-100 text-gray-600 text-xs font-medium px-2 py-1 rounded">PDF</span>
-                    </div>
-                    <h3 class="font-semibold text-gray-900 mb-1 line-clamp-2 group-hover:text-brand-600 transition-colors text-sm">
-                        Англи хэлний дүрэм (Intermediate)
-                    </h3>
-                    <div class="flex items-center gap-2 text-xs text-gray-500 mb-3">
-                        <span><i class="fas fa-download mr-1"></i> 90</span>
-                        <span>•</span>
-                        <span>Teacher_A</span>
-                    </div>
-                    <div class="flex items-center justify-between pt-3 border-t border-gray-50">
-                        <span class="font-bold text-gray-900">5,000₮</span>
-                        <button class="text-gray-400 hover:text-brand-600 transition-colors">
-                            <i class="fas fa-shopping-cart"></i>
-                        </button>
-                    </div>
-                </div>
-
-                <!-- File Card 8 -->
-                <div class="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-md transition-shadow group relative">
-                    <div class="flex items-start justify-between mb-3">
-                        <div class="w-10 h-10 rounded-lg bg-pink-50 text-pink-600 flex items-center justify-center text-xl">
-                            <i class="fas fa-file-archive"></i>
-                        </div>
-                        <span class="bg-gray-100 text-gray-600 text-xs font-medium px-2 py-1 rounded">ZIP</span>
-                    </div>
-                    <h3 class="font-semibold text-gray-900 mb-1 line-clamp-2 group-hover:text-brand-600 transition-colors text-sm">
-                        Вэб сайт дизайн UI Kit
-                    </h3>
-                    <div class="flex items-center gap-2 text-xs text-gray-500 mb-3">
-                        <span><i class="fas fa-download mr-1"></i> 65</span>
-                        <span>•</span>
-                        <span>Designer_X</span>
-                    </div>
-                    <div class="flex items-center justify-between pt-3 border-t border-gray-50">
-                        <span class="font-bold text-gray-900">40,000₮</span>
-                        <button class="text-gray-400 hover:text-brand-600 transition-colors">
-                            <i class="fas fa-shopping-cart"></i>
-                        </button>
-                    </div>
-                </div>
-
-                <!-- CTA Card in Grid (Mix content) - Moved to end of row if needed, or removed as we have 8 items now. Keeping 8 items is cleaner. -->
+                <?php endforeach; ?>
             </div>
         </div>
+        <?php endif; ?>
 
-        <!-- MOST DOWNLOADED FILES (New Section) -->
-        <div class="mx-4 lg:mx-0 mb-16">
-            <div class="flex items-center justify-between mb-4">
-                <h2 class="text-lg font-bold text-gray-900 flex items-center gap-2">
-                    <span class="w-1.5 h-6 bg-green-500 rounded-full"></span>
-                    Хамгийн их татагдсан
-                </h2>
-                <a href="browse-files.php?sort=popular" class="text-sm font-medium text-brand-600 hover:text-brand-700">Бүгд &rarr;</a>
-            </div>
-
-            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                <!-- Most Downloaded 1 -->
-                <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden hover:shadow-md transition">
-                    <div class="flex gap-4">
-                        <div class="w-12 h-12 bg-blue-50 text-blue-600 rounded-lg flex items-center justify-center flex-shrink-0">
-                            <i class="fas fa-file-word text-xl"></i>
-                        </div>
-                        <div>
-                            <h3 class="font-bold text-gray-800 text-sm line-clamp-1 hover:text-blue-600 cursor-pointer">Ажилд орох өргөдөл (Маягт)</h3>
-                            <p class="text-xs text-gray-500 mb-2">HR_Mongolia • 8.5k татсан</p>
-                            <span class="text-green-600 font-bold text-sm bg-green-50 px-2 py-0.5 rounded">Үнэгүй</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Most Downloaded 2 -->
-                <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden hover:shadow-md transition">
-                    <div class="flex gap-4">
-                        <div class="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-lg flex items-center justify-center flex-shrink-0">
-                            <i class="fas fa-file-contract text-xl"></i>
-                        </div>
-                        <div>
-                            <h3 class="font-bold text-gray-800 text-sm line-clamp-1 hover:text-indigo-600 cursor-pointer">Түрээсийн гэрээ (Орон сууц)</h3>
-                            <p class="text-xs text-gray-500 mb-2">RealEstate • 6.2k татсан</p>
-                            <span class="text-brand-600 font-bold text-sm">3,000₮</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Most Downloaded 3 -->
-                <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden hover:shadow-md transition">
-                    <div class="flex gap-4">
-                        <div class="w-12 h-12 bg-green-50 text-green-600 rounded-lg flex items-center justify-center flex-shrink-0">
-                            <i class="fas fa-file-invoice text-xl"></i>
-                        </div>
-                        <div>
-                            <h3 class="font-bold text-gray-800 text-sm line-clamp-1 hover:text-green-600 cursor-pointer">Нэхэмжлэх загвар (Excel)</h3>
-                            <p class="text-xs text-gray-500 mb-2">Accounting • 5.1k татсан</p>
-                            <span class="text-green-600 font-bold text-sm bg-green-50 px-2 py-0.5 rounded">Үнэгүй</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Most Downloaded 4 -->
-                <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden hover:shadow-md transition">
-                    <div class="flex gap-4">
-                        <div class="w-12 h-12 bg-red-50 text-red-600 rounded-lg flex items-center justify-center flex-shrink-0">
-                            <i class="fas fa-file-pdf text-xl"></i>
-                        </div>
-                        <div>
-                            <h3 class="font-bold text-gray-800 text-sm line-clamp-1 hover:text-red-600 cursor-pointer">CV Загвар (Modern)</h3>
-                            <p class="text-xs text-gray-500 mb-2">DesignPro • 4.8k татсан</p>
-                            <span class="text-brand-600 font-bold text-sm">5,000₮</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Most Downloaded 5 -->
-                <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden hover:shadow-md transition">
-                    <div class="flex gap-4">
-                        <div class="w-12 h-12 bg-yellow-50 text-yellow-600 rounded-lg flex items-center justify-center flex-shrink-0">
-                            <i class="fas fa-file-alt text-xl"></i>
-                        </div>
-                        <div>
-                            <h3 class="font-bold text-gray-800 text-sm line-clamp-1 hover:text-yellow-600 cursor-pointer">Чөлөөний хуудас</h3>
-                            <p class="text-xs text-gray-500 mb-2">OfficeAdmin • 3.5k татсан</p>
-                            <span class="text-green-600 font-bold text-sm bg-green-50 px-2 py-0.5 rounded">Үнэгүй</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Most Downloaded 6 -->
-                <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden hover:shadow-md transition">
-                    <div class="flex gap-4">
-                        <div class="w-12 h-12 bg-purple-50 text-purple-600 rounded-lg flex items-center justify-center flex-shrink-0">
-                            <i class="fas fa-money-bill-wave text-xl"></i>
-                        </div>
-                        <div>
-                            <h3 class="font-bold text-gray-800 text-sm line-clamp-1 hover:text-purple-600 cursor-pointer">Бэлэн мөнгөний орлого зарлага</h3>
-                            <p class="text-xs text-gray-500 mb-2">FinBook • 3.1k татсан</p>
-                            <span class="text-brand-600 font-bold text-sm">2,000₮</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Featured Collections (Added Here) -->
+        <!-- Featured Collections (Static Banner - Keep as is or make dynamic later) -->
         <div class="mx-4 lg:mx-0 mb-16">
             <div class="relative overflow-hidden rounded-2xl bg-gradient-to-r from-slate-900 to-slate-800 text-white shadow-2xl p-8 md:p-12">
                 <!-- Decorative shapes -->
@@ -695,7 +361,6 @@ include 'includes/header.php';
                     <div class="md:w-1/2 flex justify-center relative">
                         <!-- Floating Cards Visual -->
                         <div class="relative w-64 h-64 animate-[float_6s_ease-in-out_infinite]">
-                            <!-- Card 1 -->
                             <div class="absolute top-0 right-4 w-48 bg-white/10 backdrop-blur-md border border-white/20 p-4 rounded-xl transform rotate-6 shadow-xl">
                                 <div class="h-2 w-16 bg-white/30 rounded mb-2"></div>
                                 <div class="h-16 w-full bg-white/10 rounded mb-3"></div>
@@ -704,7 +369,6 @@ include 'includes/header.php';
                                     <div class="h-4 w-12 bg-green-400/80 rounded"></div>
                                 </div>
                             </div>
-                            <!-- Card 2 -->
                             <div class="absolute top-8 left-0 w-48 bg-white p-4 rounded-xl shadow-2xl transform -rotate-3 z-10">
                                 <div class="flex items-center gap-3 mb-3">
                                     <div class="w-8 h-8 rounded-full bg-orange-100 text-orange-500 flex items-center justify-center">
@@ -726,4 +390,7 @@ include 'includes/header.php';
             </div>
         </div>
 
-        <?php include 'includes/footer.php' ?>
+    </main>
+</div>
+
+<?php include 'includes/footer.php' ?>

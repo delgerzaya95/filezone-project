@@ -1,106 +1,22 @@
 <?php
-// 1. Database болон Google тохиргоог дуудах
-// Хэрэв танд google_config.php байхгүй бол доорх мөрийг түр коммент болгоод туршиж болно.
-if (file_exists('includes/google_config.php')) {
-    require_once 'includes/google_config.php';
-}
+// 1. Database тохиргоог дуудах
 require_once 'includes/db.php';
 
-// Хэрэв хэрэглэгч аль хэдийн нэвтэрсэн бол Профайл руу шилжүүлэх
-if (isLoggedIn()) {
-    header('Location: profile.php');
+// Session эхлүүлэх
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+// Хэрэв хэрэглэгч аль хэдийн нэвтэрсэн бол
+if (isset($_SESSION['user_id'])) {
+    header('Location: index.php');
     exit;
 }
 
 $error = '';
 
 // -------------------------------------------------------------------------
-// 2. GOOGLE LOGIN HANDLER (Google-ээс буцаж ирэхэд ажиллах хэсэг)
-// -------------------------------------------------------------------------
-if (isset($_GET['code']) && isset($google_client)) {
-    try {
-        $token = $google_client->fetchAccessTokenWithAuthCode($_GET['code']);
-        
-        if (!isset($token['error'])) {
-            $google_client->setAccessToken($token['access_token']);
-            $_SESSION['access_token'] = $token['access_token'];
-
-            // Google-ээс хэрэглэгчийн мэдээллийг авах
-            $google_service = new Google_Service_Oauth2($google_client);
-            $google_account_info = $google_service->userinfo->get();
-            
-            $google_id = $google_account_info->id;
-            $email = $google_account_info->email;
-            $name = $google_account_info->name;
-            $picture = $google_account_info->picture;
-
-            // Database-ээс шалгах
-            $stmt = $pdo->prepare("SELECT * FROM users WHERE email = :email LIMIT 1");
-            $stmt->execute([':email' => $email]);
-            $user = $stmt->fetch();
-
-            if ($user) {
-                // Хэрэглэгч бүртгэлтэй бол: Google ID-г нь шинэчилж нэвтрүүлнэ
-                if (empty($user['google_id'])) {
-                    $update = $pdo->prepare("UPDATE users SET google_id = :gid, avatar_url = :avatar WHERE id = :id");
-                    $update->execute([
-                        ':gid' => $google_id,
-                        ':avatar' => $picture,
-                        ':id' => $user['id']
-                    ]);
-                }
-                
-                // Session үүсгэх
-                $_SESSION['user_id'] = $user['id'];
-                $_SESSION['username'] = $user['username'];
-                $_SESSION['email'] = $user['email'];
-                $_SESSION['role'] = $user['role'];
-                $_SESSION['avatar'] = $user['avatar_url'];
-                
-                header('Location: profile.php');
-                exit;
-            } else {
-                // Хэрэглэгч бүртгэлгүй бол: Шинээр бүртгэнэ
-                // Username-ийг имэйлийн эхний хэсгээр үүсгэх
-                $username = explode('@', $email)[0];
-                
-                // Давхардсан username байгаа эсэхийг шалгах
-                $checkUser = $pdo->prepare("SELECT id FROM users WHERE username = :username");
-                $checkUser->execute([':username' => $username]);
-                if ($checkUser->rowCount() > 0) {
-                    $username .= rand(100, 999); // Давхардвал тоо залгана
-                }
-
-                $insert = $pdo->prepare("INSERT INTO users (username, email, password, google_id, full_name, avatar_url, role, is_verified) VALUES (:username, :email, :password, :gid, :fullname, :avatar, 'user', 1)");
-                $insert->execute([
-                    ':username' => $username,
-                    ':email' => $email,
-                    ':password' => password_hash(bin2hex(random_bytes(10)), PASSWORD_DEFAULT), // Санамсаргүй нууц үг
-                    ':gid' => $google_id,
-                    ':fullname' => $name,
-                    ':avatar' => $picture,
-                ]);
-
-                $newUserId = $pdo->lastInsertId();
-
-                // Session үүсгэх
-                $_SESSION['user_id'] = $newUserId;
-                $_SESSION['username'] = $username;
-                $_SESSION['email'] = $email;
-                $_SESSION['role'] = 'user';
-                $_SESSION['avatar'] = $picture;
-
-                header('Location: profile.php');
-                exit;
-            }
-        }
-    } catch (Exception $e) {
-        $error = "Google-ээр нэвтрэхэд алдаа гарлаа. Дахин оролдоно уу.";
-    }
-}
-
-// -------------------------------------------------------------------------
-// 3. NORMAL LOGIN HANDLER (Имэйл, нууц үгээр нэвтрэх)
+// LOGIN HANDLER
 // -------------------------------------------------------------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $login_id = trim($_POST['email']); // Имэйл эсвэл Username
@@ -111,6 +27,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         try {
             // Имэйл эсвэл Username-ээр хайх
+            // $pdo объект db.php-ээс орж ирнэ
             $stmt = $pdo->prepare("SELECT * FROM users WHERE email = :email OR username = :username LIMIT 1");
             $stmt->execute([':email' => $login_id, ':username' => $login_id]);
             $user = $stmt->fetch();
@@ -121,19 +38,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $_SESSION['username'] = $user['username'];
                 $_SESSION['email'] = $user['email'];
                 $_SESSION['role'] = $user['role'];
-                $_SESSION['avatar'] = $user['avatar_url'];
+                $_SESSION['avatar'] = $user['avatar_url']; // avatar_url багана байгаа гэж үзэв
                 
                 // Сүүлд нэвтэрсэн цагийг шинэчлэх
                 $updateStmt = $pdo->prepare("UPDATE users SET last_active = NOW() WHERE id = :id");
                 $updateStmt->execute([':id' => $user['id']]);
 
-                header('Location: profile.php');
+                header('Location: index.php');
                 exit;
             } else {
                 $error = "Имэйл эсвэл нууц үг буруу байна.";
             }
         } catch (PDOException $e) {
-            $error = "Системийн алдаа гарлаа.";
+            $error = "Системийн алдаа гарлаа. Та дараа дахин оролдоно уу.";
+            // error_log($e->getMessage()); // Алдааг log руу бичих
         }
     }
 }
@@ -147,12 +65,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="assets/css/style.css">
-    <script src="assets/js/tailwind-config.js"></script>
+    <!-- Tailwind Custom Configuration -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#eff6ff',
+                            100: '#dbeafe',
+                            200: '#bfdbfe',
+                            300: '#93c5fd',
+                            400: '#60a5fa',
+                            500: '#3b82f6',
+                            600: '#2563eb', // Primary Brand Color
+                            700: '#1d4ed8',
+                            800: '#1e40af',
+                            900: '#1e3a8a',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .bg-pattern {
+            background-color: #f8fafc;
+            background-image: radial-gradient(#e2e8f0 1px, transparent 1px);
+            background-size: 24px 24px;
+        }
+    </style>
 </head>
 <body class="text-gray-700 antialiased font-sans bg-pattern min-h-screen flex flex-col">
 
-    <!-- Top Bar -->
+    <!-- 1. Top Bar -->
     <div class="bg-slate-800 text-gray-400 text-[10px] sm:text-xs py-1.5 border-b border-slate-700">
         <div class="w-full max-w-7xl mx-auto px-4 flex justify-between items-center">
             <span>Монголын дижитал файлын сан</span>
@@ -164,7 +113,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </div>
     </div>
     
-    <!-- Navbar -->
+    <!-- 2. Navbar -->
     <nav class="bg-white/80 backdrop-blur-md border-b border-gray-200 sticky top-0 z-30">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex justify-between h-16 items-center">
@@ -182,7 +131,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </div>
     </nav>
 
-    <!-- Main Content -->
+    <!-- 3. Main Login Content -->
     <main class="flex-1 flex items-center justify-center p-4 sm:p-8">
         
         <div class="w-full max-w-md bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden relative">
@@ -258,18 +207,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 <!-- Google Login Button -->
                 <div class="mb-6">
-                    <?php if(isset($google_client)): ?>
-                        <a href="<?php echo $google_client->createAuthUrl(); ?>" class="w-full flex items-center justify-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium text-gray-700">
-                            <img src="https://www.svgrepo.com/show/475656/google-color.svg" class="w-4 h-4" alt="Google">
-                            Google-ээр нэвтрэх
-                        </a>
-                    <?php else: ?>
-                        <!-- Хэрэв Google Config дуудагдаагүй бол товчийг идэвхгүй харуулах -->
-                        <button class="w-full flex items-center justify-center gap-2 px-4 py-2 bg-gray-100 border border-gray-200 rounded-lg text-sm font-medium text-gray-400 cursor-not-allowed">
-                            <img src="https://www.svgrepo.com/show/475656/google-color.svg" class="w-4 h-4 opacity-50" alt="Google">
-                            Google (Тохиргоо хийгдээгүй)
-                        </button>
-                    <?php endif; ?>
+                    <a href="google-login.php" class="w-full flex items-center justify-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium text-gray-700 shadow-sm">
+                        <img src="https://www.svgrepo.com/show/475656/google-color.svg" class="w-4 h-4" alt="Google">
+                        Google-ээр нэвтрэх
+                    </a>
                 </div>
 
                 <!-- Register Link -->
@@ -289,6 +230,5 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <p class="text-xs text-gray-400">&copy; 2025 Filezone.mn. Бүх эрх хуулиар хамгаалагдсан.</p>
         </div>
     </footer>
-    <script src="assets/js/main.js"></script>
 </body>
 </html>

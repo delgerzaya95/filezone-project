@@ -1,26 +1,72 @@
 <?php
+session_start();
+
+// Database холболт
+require_once '../includes/db.php';
+
+// Админ эрх шалгах
+if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+    header("Location: login.php");
+    exit;
+}
+
 // --------------------------------------------------------------------------
-// MOCK DATA (Өгөгдлийн баазтай холбох үед энд SQL query бичигдэнэ)
+// DATABASE QUERIES (Өгөгдлийн баазаас бодит мэдээлэл татах)
 // --------------------------------------------------------------------------
 
-// Статистик тоон мэдээлэл
-$stats = [
-    'total_users' => 1250,
-    'total_files' => 8430,
-    'total_downloads' => 45200,
-    'total_revenue' => '2,450,000₮',
-    'pending_withdrawals' => 3
-];
+// 1. Статистик тоон мэдээлэл
+$stats = [];
 
-// Сүүлд нэмэгдсэн файлууд (Жишээ)
-$recent_files = [
-    ['id' => 101, 'name' => 'English_Grammar.pdf', 'user' => 'Bat-Erdene', 'size' => '2.5 MB', 'date' => '2025-10-24 10:30', 'status' => 'active'],
-    ['id' => 102, 'name' => 'Project_Plan.docx', 'user' => 'Sarnai', 'size' => '1.2 MB', 'date' => '2025-10-24 09:15', 'status' => 'active'],
-    ['id' => 103, 'name' => 'Holiday_Photos.zip', 'user' => 'Boldoo', 'size' => '150 MB', 'date' => '2025-10-23 16:45', 'status' => 'deleted'],
-    ['id' => 104, 'name' => 'Setup_v2.exe', 'user' => 'Admin', 'size' => '45 MB', 'date' => '2025-10-23 14:20', 'status' => 'active'],
-    ['id' => 105, 'name' => 'Report_2025.pdf', 'user' => 'Tuya', 'size' => '800 KB', 'date' => '2025-10-23 11:00', 'status' => 'pending'],
-];
+// Нийт хэрэглэгчид (users table)
+$stmt = $pdo->query("SELECT COUNT(*) FROM users WHERE role = 'user'");
+$stats['total_users'] = $stmt->fetchColumn();
 
+// Нийт файлууд (files table)
+$stmt = $pdo->query("SELECT COUNT(*) FROM files");
+$stats['total_files'] = $stmt->fetchColumn();
+
+// Нийт таталт (files table - download_count нийлбэр)
+$stmt = $pdo->query("SELECT SUM(download_count) FROM files");
+$total_downloads = $stmt->fetchColumn();
+$stats['total_downloads'] = $total_downloads ? $total_downloads : 0;
+
+// Нийт орлого (transactions table - status='success')
+$stmt = $pdo->query("SELECT SUM(amount) FROM transactions WHERE status = 'success'");
+$total_revenue = $stmt->fetchColumn();
+$stats['total_revenue'] = number_format($total_revenue ? $total_revenue : 0) . '₮';
+
+// Хүлээгдэж буй мөнгө татах хүсэлтүүд (withdrawal_requests - status='pending')
+$stmt = $pdo->query("SELECT COUNT(*) FROM withdrawal_requests WHERE status = 'pending'");
+$stats['pending_withdrawals'] = $stmt->fetchColumn();
+
+
+// 2. Сүүлд нэмэгдсэн файлууд (files table + users table join)
+$sql = "SELECT f.id, f.title as name, f.file_size, f.upload_date as date, f.status, u.username as user 
+        FROM files f 
+        LEFT JOIN users u ON f.user_id = u.id 
+        ORDER BY f.upload_date DESC 
+        LIMIT 10";
+$stmt = $pdo->prepare($sql);
+$stmt->execute();
+$recent_files = $stmt->fetchAll();
+
+// Туслах функц: Файлын хэмжээг хөрвүүлэх (Byte -> MB, GB)
+function formatSizeUnits($bytes) {
+    if ($bytes >= 1073741824) { $bytes = number_format($bytes / 1073741824, 2) . ' GB'; }
+    elseif ($bytes >= 1048576) { $bytes = number_format($bytes / 1048576, 2) . ' MB'; }
+    elseif ($bytes >= 1024) { $bytes = number_format($bytes / 1024, 2) . ' KB'; }
+    elseif ($bytes > 1) { $bytes = $bytes . ' bytes'; }
+    elseif ($bytes == 1) { $bytes = $bytes . ' byte'; }
+    else { $bytes = '0 bytes'; }
+    return $bytes;
+}
+
+// Файлын өгөгдлийг загварт тохируулж бэлдэх
+foreach ($recent_files as $key => $file) {
+    $recent_files[$key]['size'] = formatSizeUnits($file['file_size']);
+    // Огноог загварын дагуу форматлах
+    $recent_files[$key]['date'] = date('Y-m-d H:i', strtotime($file['date']));
+}
 ?>
 <!DOCTYPE html>
 <html lang="mn">
@@ -194,6 +240,16 @@ $recent_files = [
                 <div class="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
                     <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
                         <h3 class="text-lg font-bold text-slate-800">Сүүлд нэмэгдсэн файлууд</h3>
+                        
+                        <?php if($stats['pending_withdrawals'] > 0): ?>
+                        <div class="flex items-center">
+                            <span class="text-sm font-medium text-slate-500 mr-2">Хүлээгдэж буй татлага:</span>
+                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                                <?php echo $stats['pending_withdrawals']; ?>
+                            </span>
+                        </div>
+                        <?php endif; ?>
+                        
                         <a href="admin/files.php" class="text-sm text-indigo-600 hover:text-indigo-800 font-medium">Бүгдийг харах &rarr;</a>
                     </div>
                     <div class="overflow-x-auto">
@@ -223,7 +279,7 @@ $recent_files = [
                                     <td class="px-6 py-4 text-sm text-slate-500"><?php echo $file['size']; ?></td>
                                     <td class="px-6 py-4 text-sm text-slate-500"><?php echo $file['date']; ?></td>
                                     <td class="px-6 py-4">
-                                        <?php if($file['status'] == 'active'): ?>
+                                        <?php if($file['status'] == 'approved' || $file['status'] == 'active'): ?>
                                             <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Идэвхтэй</span>
                                         <?php elseif($file['status'] == 'pending'): ?>
                                             <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">Хүлээгдэж буй</span>
@@ -232,8 +288,8 @@ $recent_files = [
                                         <?php endif; ?>
                                     </td>
                                     <td class="px-6 py-4 text-right">
-                                        <button class="text-slate-400 hover:text-indigo-600 mx-1"><i class="fas fa-edit"></i></button>
-                                        <button class="text-slate-400 hover:text-red-600 mx-1"><i class="fas fa-trash"></i></button>
+                                        <button class="text-slate-400 hover:text-indigo-600 mx-1" onclick="window.location.href='edit_file.php?id=<?php echo $file['id']; ?>'"><i class="fas fa-edit"></i></button>
+                                        <button class="text-slate-400 hover:text-red-600 mx-1" onclick="if(confirm('Та энэ файлыг устгахдаа итгэлтэй байна уу?')) window.location.href='delete_file.php?id=<?php echo $file['id']; ?>'"><i class="fas fa-trash"></i></button>
                                     </td>
                                 </tr>
                                 <?php endforeach; ?>

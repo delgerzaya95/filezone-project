@@ -413,3 +413,75 @@ function saveSettings() {
         }, 800);
     }
 }
+
+function closeModal(modalId) {
+        document.getElementById(modalId).classList.add('hidden');
+    }
+
+    // --- Category Modal ---
+    function openCategoryModal(action, data = null) {
+        const modal = document.getElementById('categoryModal');
+        const title = document.getElementById('cat_modal_title');
+        const actionInput = document.getElementById('cat_action');
+        
+        if (action === 'edit' && data) {
+            title.textContent = 'Ангилал засах';
+            actionInput.value = 'update';
+            document.getElementById('cat_id').value = data.id;
+            document.getElementById('cat_name').value = data.name;
+            document.getElementById('cat_slug').value = data.slug;
+            document.getElementById('cat_icon').value = data.icon_class;
+        } else {
+            title.textContent = 'Шинэ ангилал';
+            actionInput.value = 'add';
+            document.getElementById('cat_id').value = '';
+            document.getElementById('cat_name').value = '';
+            document.getElementById('cat_slug').value = '';
+            document.getElementById('cat_icon').value = 'fas fa-folder';
+        }
+        modal.classList.remove('hidden');
+    }
+
+    // --- Subcategory Modal ---
+    function openSubcategoryModal(action, data = null) {
+        const modal = document.getElementById('subcategoryModal');
+        const title = document.getElementById('sub_modal_title');
+        const actionInput = document.getElementById('sub_action');
+        
+        if (action === 'edit' && data) {
+            title.textContent = 'Дэд ангилал засах';
+            actionInput.value = 'update';
+            document.getElementById('sub_id').value = data.id;
+            document.getElementById('sub_cat_id').value = data.category_id;
+            document.getElementById('sub_name').value = data.name;
+        } else {
+            title.textContent = 'Шинэ дэд ангилал';
+            actionInput.value = 'add';
+            document.getElementById('sub_id').value = '';
+            document.getElementById('sub_cat_id').selectedIndex = 0;
+            document.getElementById('sub_name').value = '';
+        }
+        modal.classList.remove('hidden');
+    }
+
+    // --- Child Category Modal ---
+    function openChildModal(action, data = null) {
+        const modal = document.getElementById('childModal');
+        const title = document.getElementById('child_modal_title');
+        const actionInput = document.getElementById('child_action');
+        
+        if (action === 'edit' && data) {
+            title.textContent = 'Жижиг ангилал засах';
+            actionInput.value = 'update';
+            document.getElementById('child_id').value = data.id;
+            document.getElementById('child_sub_id').value = data.subcategory_id;
+            document.getElementById('child_name').value = data.name;
+        } else {
+            title.textContent = 'Шинэ жижиг ангилал';
+            actionInput.value = 'add';
+            document.getElementById('child_id').value = '';
+            document.getElementById('child_sub_id').selectedIndex = 0;
+            document.getElementById('child_name').value = '';
+        }
+        modal.classList.remove('hidden');
+    }

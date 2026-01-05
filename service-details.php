@@ -1,549 +1,675 @@
 <?php
-// Энэ хэсэгт PHP логик бичигдэнэ (Database connection, fetching data etc.)
-// Жишээ өгөгдлүүд (Mock Data):
-$service = [
-    'title' => 'Байгууллагын санхүүгийн цогц тайлан гаргаж, зөвлөгөө өгнө',
-    'category' => 'Санхүү & Нягтлан',
-    'price' => '150,000₮',
-    'rating' => 4.8,
-    'review_count' => 124,
-    'orders_queue' => 3,
-    'delivery_days' => 2,
-    'description' => 'Мэргэжлийн нягтлан бодогч танай байгууллагын санхүүгийн тайланг ОУ-ын стандартын дагуу чанартай, хурдан шуурхай гаргаж өгнө. <br><br> 
-    <strong>Үйлчилгээнд багтах зүйлс:</strong>
-    <ul class="list-disc pl-5 mt-2">
-        <li>Баланс тайлан</li>
-        <li>Орлого үр дүнгийн тайлан</li>
-        <li>Мөнгөн гүйлгээний тайлан</li>
-        <li>Өмчийн өөрчлөлтийн тайлан</li>
-    </ul>',
-    'author' => 'B.Delgerzaya',
-    'author_level' => 'Мэргэшсэн',
-    'author_avatar' => 'assets/images/default-avatar.png', // Таны файлд байгаа default avatar
-    'views' => 1502,
-    'created_at' => '2025-10-01'
-];
-?>
-<!DOCTYPE html>
-<html lang="mn">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?php echo $service['title']; ?> - Filezone.mn</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="assets/css/style.css">
-    <script src="assets/js/tailwind-config.js"></script>
-</head>
-<body class="text-gray-700 antialiased font-sans flex flex-col min-h-screen">
+// 1. АЛДАА ИЛРҮҮЛЭХ КОД (Development mode)
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
 
-    <!-- 1. Top Bar -->
-    <div class="bg-slate-800 text-gray-400 text-[10px] sm:text-xs py-1.5 border-b border-slate-700">
-        <div class="w-full max-w-7xl mx-auto px-4 flex justify-between items-center">
-            <span>Монголын дижитал файлын сан</span>
-            <div class="flex gap-3">
-                <a href="guides.php" class="hover:text-white transition-colors">Тусламж</a>
-                <span class="hidden sm:inline">|</span>
-                <a href="contact.php" class="hover:text-white transition-colors">Холбоо барих</a>
+session_start();
+require_once 'includes/db.php';
+
+// Brevo API файлыг дуудах
+require_once 'api/brevo_email.php';
+
+// Кирилл үсэгтэй ажиллахад тохиргоо
+if (function_exists('mb_internal_encoding')) {
+    mb_internal_encoding("UTF-8");
+}
+
+// --------------------------------------------------------------------------
+// 2. AJAX HANDLERS (REPORT ONLY - SAVE MOVED TO API)
+// --------------------------------------------------------------------------
+
+// --- A. REPORT SERVICE (Зөрчил мэдээлэх) ---
+if (isset($_POST['action']) && $_POST['action'] == 'report_service') {
+    ob_clean(); // Buffer цэвэрлэх
+    header('Content-Type: application/json');
+    
+    if (!isset($_SESSION['user_id'])) {
+        echo json_encode(['success' => false, 'message' => 'Та зөрчил мэдээлэхийн тулд эхлээд нэвтэрнэ үү.']);
+        exit;
+    }
+
+    $svc_id_report = intval($_POST['service_id']);
+    $reason = trim($_POST['reason']);
+    $description = trim($_POST['description']);
+    $reporter_id = $_SESSION['user_id'];
+
+    if (empty($reason)) {
+        echo json_encode(['success' => false, 'message' => 'Зөрчлийн төрлийг сонгоно уу.']);
+        exit;
+    }
+
+    try {
+        // Давхар мэдээлсэн эсэхийг шалгах
+        $check = $pdo->prepare("SELECT id FROM service_reports WHERE service_id = ? AND reporter_id = ? AND status = 'pending'");
+        $check->execute([$svc_id_report, $reporter_id]);
+        
+        if ($check->rowCount() > 0) {
+            echo json_encode(['success' => false, 'message' => 'Та энэ үйлчилгээг аль хэдийн мэдээлсэн байна.']);
+            exit;
+        }
+
+        // Хадгалах
+        $stmt_report = $pdo->prepare("INSERT INTO service_reports (service_id, reporter_id, reason, description) VALUES (?, ?, ?, ?)");
+        $stmt_report->execute([$svc_id_report, $reporter_id, $reason, $description]);
+
+        // Mэйл илгээх (Optional)
+        if ($stmt_report->rowCount() > 0) {
+            $stmt_info = $pdo->prepare("SELECT s.title, u.username FROM services s JOIN users u ON u.id = ? WHERE s.id = ?");
+            $stmt_info->execute([$reporter_id, $svc_id_report]);
+            $info = $stmt_info->fetch(PDO::FETCH_ASSOC);
+
+            if ($info && function_exists('sendBrevoEmail')) {
+                $adminEmail = "info@filezone.mn"; 
+                sendBrevoEmail(
+                    $adminEmail,
+                    $info['title'],
+                    $info['username'],
+                    $reason,
+                    $description,
+                    $svc_id_report
+                );
+            }
+        }
+
+        echo json_encode(['success' => true, 'message' => 'Таны хүсэлтийг хүлээн авлаа. Бид шалгаад арга хэмжээ авах болно.']);
+    } catch (Exception $e) {
+        echo json_encode(['success' => false, 'message' => 'Системийн алдаа: ' . $e->getMessage()]);
+    }
+    exit;
+}
+
+// --------------------------------------------------------------------------
+// 3. ҮНДСЭН ХУУДАСНЫ ЛОГИК
+// --------------------------------------------------------------------------
+
+// ID шалгах
+if (!isset($_GET['id']) || empty($_GET['id'])) {
+    header("Location: services.php");
+    exit;
+}
+
+$service_id = intval($_GET['id']);
+
+// ТУСЛАХ ФУНКЦУУД
+function deliveryUnitToMn($unit, $time) {
+    switch ($unit) {
+        case 'hour': return $time . ' цаг';
+        case 'day': return $time . ' хоног';
+        case 'week': return $time . ' долоо хоног';
+        case 'month': return $time . ' сар';
+        default: return $time . ' ' . $unit;
+    }
+}
+
+function getRandomColorClass($str) {
+    $colors = [
+        ['bg' => 'bg-red-100', 'text' => 'text-red-600'],
+        ['bg' => 'bg-blue-100', 'text' => 'text-blue-600'],
+        ['bg' => 'bg-green-100', 'text' => 'text-green-600'],
+        ['bg' => 'bg-yellow-100', 'text' => 'text-yellow-600'],
+        ['bg' => 'bg-indigo-100', 'text' => 'text-indigo-600'],
+        ['bg' => 'bg-purple-100', 'text' => 'text-purple-600'],
+        ['bg' => 'bg-pink-100', 'text' => 'text-pink-600'],
+    ];
+    $str = (string)$str;
+    $index = strlen($str) % count($colors);
+    return $colors[$index];
+}
+
+function getInitials($name) {
+    $name = (string)$name;
+    if (function_exists('mb_substr')) {
+        return mb_strtoupper(mb_substr($name, 0, 2));
+    }
+    preg_match_all('/./u', $name, $matches);
+    return strtoupper(implode('', array_slice($matches[0] ?? [], 0, 2)));
+}
+
+function timeAgo($datetime) {
+    $time = strtotime($datetime);
+    $diff = time() - $time;
+    if ($diff < 60) return 'Дөнгөж сая';
+    if ($diff < 3600) return floor($diff / 60) . ' минутын өмнө';
+    if ($diff < 86400) return floor($diff / 3600) . ' цагийн өмнө';
+    if ($diff < 604800) return floor($diff / 86400) . ' өдрийн өмнө';
+    return date('Y-m-d', $time);
+}
+
+// VIEW COUNT НЭМЭХ
+if (!isset($_SESSION['viewed_service_' . $service_id])) {
+    $pdo->prepare("UPDATE services SET view_count = view_count + 1 WHERE id = ?")->execute([$service_id]);
+    $_SESSION['viewed_service_' . $service_id] = true;
+}
+
+// ӨГӨГДӨЛ ТАТАХ
+try {
+    // A. Үндсэн мэдээлэл
+    $stmt = $pdo->prepare("
+        SELECT s.*, u.username, u.full_name, u.avatar_url, u.created_at as user_joined, sc.name as category_name,
+        (SELECT COUNT(*) FROM service_reviews WHERE service_id = s.id) as review_count,
+        (SELECT COUNT(*) FROM service_orders WHERE service_id = s.id AND status IN ('pending', 'active')) as queue_count,
+        (SELECT COUNT(*) FROM service_orders WHERE seller_id = u.id AND status = 'completed') as total_completed_orders
+        FROM services s
+        JOIN users u ON s.user_id = u.id
+        LEFT JOIN service_categories sc ON s.category_id = sc.id
+        WHERE s.id = ? AND s.status = 'active'
+    ");
+    $stmt->execute([$service_id]);
+    $service = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$service) {
+        die("<div style='text-align:center; padding:50px;'><h1>Уучлаарай, энэ үйлчилгээ олдсонгүй.</h1><a href='services.php'>Буцах</a></div>");
+    }
+
+    // B. Gallery
+    $stmt_img = $pdo->prepare("SELECT preview_url FROM service_previews WHERE service_id = ? ORDER BY order_index ASC");
+    $stmt_img->execute([$service_id]);
+    $gallery = $stmt_img->fetchAll(PDO::FETCH_COLUMN);
+
+    if (empty($gallery) && !empty($service['cover_image'])) {
+        $gallery[] = $service['cover_image'];
+    } elseif (empty($gallery)) {
+        $gallery[] = 'assets/images/service-placeholder.jpg';
+    }
+
+    // C. Reviews
+    $stmt_rev = $pdo->prepare("
+        SELECT r.*, u.username, u.full_name, u.avatar_url 
+        FROM service_reviews r 
+        JOIN users u ON r.user_id = u.id 
+        WHERE r.service_id = ? 
+        ORDER BY r.created_at DESC
+    ");
+    $stmt_rev->execute([$service_id]);
+    $reviews = $stmt_rev->fetchAll(PDO::FETCH_ASSOC);
+
+    // D. FAQ
+    $stmt_faq = $pdo->prepare("SELECT * FROM service_faqs WHERE service_id = ?");
+    $stmt_faq->execute([$service_id]);
+    $faqs = $stmt_faq->fetchAll(PDO::FETCH_ASSOC);
+
+    // E. Related
+    $stmt_rel = $pdo->prepare("
+        SELECT s.*, u.username, u.full_name, u.avatar_url 
+        FROM services s 
+        JOIN users u ON s.user_id = u.id 
+        WHERE s.category_id = ? AND s.id != ? AND s.status = 'active' 
+        LIMIT 4
+    ");
+    $stmt_rel->execute([$service['category_id'], $service_id]);
+    $related_services = $stmt_rel->fetchAll(PDO::FETCH_ASSOC);
+
+    // F. Saved Check
+    $is_saved = false;
+    if (isset($_SESSION['user_id'])) {
+        $check_save = $pdo->prepare("SELECT id FROM saved_services WHERE user_id = ? AND service_id = ?");
+        $check_save->execute([$_SESSION['user_id'], $service_id]);
+        if ($check_save->rowCount() > 0) {
+            $is_saved = true;
+        }
+    }
+
+} catch (PDOException $e) {
+    die("Database Error: " . $e->getMessage());
+}
+
+$author_name = !empty($service['full_name']) ? $service['full_name'] : $service['username'];
+$rating = number_format($service['rating_avg'], 1);
+$delivery_time = deliveryUnitToMn($service['delivery_unit'], $service['delivery_time']);
+$price = number_format($service['price_min']) . '₮';
+
+$hasAuthorAvatar = !empty($service['avatar_url']);
+$authorInitials = getInitials($author_name);
+$authorColor = getRandomColorClass($author_name);
+
+$page_title = htmlspecialchars($service['title']) . " - Filezone.mn";
+
+// Header
+include 'includes/header.php';
+?>
+
+<div class="flex flex-1 max-w-7xl mx-auto w-full pt-6">
+    <?php include 'includes/sidebar.php'; ?>
+
+    <main class="flex-1 px-4 lg:px-8 min-w-0 pb-12">
+        <!-- Breadcrumb -->
+        <nav class="flex mb-6 text-xs text-gray-500 overflow-x-auto no-scrollbar whitespace-nowrap">
+            <a href="index.php" class="hover:text-brand-600 transition-colors">Нүүр</a>
+            <span class="mx-2 text-gray-300">/</span>
+            <a href="services.php" class="hover:text-brand-600 transition-colors">Үйлчилгээ</a>
+            <span class="mx-2 text-gray-300">/</span>
+            <span class="font-medium text-gray-900"><?php echo htmlspecialchars($service['category_name']); ?></span>
+        </nav>
+
+        <!-- Mobile Title -->
+        <div class="lg:hidden mb-6">
+            <h1 class="text-2xl font-bold text-gray-900 mb-3 leading-snug"><?php echo htmlspecialchars($service['title']); ?></h1>
+            <div class="flex items-center gap-4 text-sm">
+                <div class="flex items-center gap-2">
+                    <?php if($hasAuthorAvatar): ?>
+                        <img src="<?php echo htmlspecialchars($service['avatar_url']); ?>" class="w-6 h-6 rounded-full object-cover">
+                    <?php else: ?>
+                        <div class="w-6 h-6 rounded-full <?php echo $authorColor['bg'] . ' ' . $authorColor['text']; ?> flex items-center justify-center text-[10px] font-bold">
+                            <?php echo $authorInitials; ?>
+                        </div>
+                    <?php endif; ?>
+                    <span class="font-medium text-gray-900"><?php echo htmlspecialchars($author_name); ?></span>
+                </div>
+                <div class="flex items-center text-yellow-500">
+                    <i class="fas fa-star mr-1"></i>
+                    <span class="font-bold text-gray-900"><?php echo $rating; ?></span>
+                    <span class="text-gray-400 ml-1">(<?php echo $service['review_count']; ?>)</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <!-- LEFT COLUMN -->
+            <div class="lg:col-span-2 space-y-8">
+                <!-- Gallery -->
+                <div class="space-y-4">
+                    <div class="aspect-video w-full bg-gray-100 rounded-2xl overflow-hidden border border-gray-200 group relative">
+                        <img id="mainImage" src="<?php echo htmlspecialchars($gallery[0]); ?>" alt="Service Main Image" class="w-full h-full object-cover transition-opacity duration-300">
+                    </div>
+                    <?php if(count($gallery) > 1): ?>
+                    <div class="flex gap-4 overflow-x-auto pb-2 no-scrollbar">
+                        <?php foreach($gallery as $index => $img): ?>
+                        <button onclick="changeImage('<?php echo htmlspecialchars($img); ?>', this)" 
+                                class="w-20 h-20 flex-shrink-0 rounded-xl border-2 <?php echo $index === 0 ? 'border-brand-500' : 'border-gray-200 hover:border-gray-300'; ?> overflow-hidden transition-all thumbnail-btn">
+                            <img src="<?php echo htmlspecialchars($img); ?>" class="w-full h-full object-cover">
+                        </button>
+                        <?php endforeach; ?>
+                    </div>
+                    <?php endif; ?>
+                </div>
+
+                <!-- Description -->
+                <div class="bg-white rounded-2xl border border-gray-200 p-6 md:p-8 shadow-sm">
+                    <h2 class="text-xl font-bold text-gray-900 mb-6">Үйлчилгээний тухай</h2>
+                    <div class="prose max-w-none text-gray-600 text-sm">
+                        <?php echo $service['description']; ?>
+                    </div>
+                    <div class="grid grid-cols-2 md:grid-cols-3 gap-6 mt-8 pt-8 border-t border-gray-100">
+                        <div>
+                            <p class="text-xs text-gray-500 mb-1">Ангилал</p>
+                            <p class="font-medium text-gray-900 text-sm"><?php echo htmlspecialchars($service['category_name']); ?></p>
+                        </div>
+                        <?php if($service['requirements']): ?>
+                        <div class="col-span-2">
+                            <p class="text-xs text-gray-500 mb-1">Шаардлагатай мэдээлэл</p>
+                            <p class="font-medium text-gray-900 text-sm truncate"><?php echo htmlspecialchars($service['requirements']); ?></p>
+                        </div>
+                        <?php endif; ?>
+                        <div>
+                            <p class="text-xs text-gray-500 mb-1">Засвар хийх</p>
+                            <p class="font-medium text-gray-900 text-sm"><?php echo $service['revision_count']; ?> удаа үнэгүй</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Author Profile -->
+                <div class="bg-white rounded-2xl border border-gray-200 p-6 md:p-8 shadow-sm">
+                    <h2 class="text-xl font-bold text-gray-900 mb-6">Гүйцэтгэгч</h2>
+                    <div class="flex flex-col sm:flex-row gap-6 items-start">
+                        <div class="w-20 h-20 rounded-full flex-shrink-0 overflow-hidden border border-gray-200 flex items-center justify-center <?php echo $hasAuthorAvatar ? 'bg-gray-100' : ($authorColor['bg'] . ' ' . $authorColor['text']); ?>">
+                            <?php if($hasAuthorAvatar): ?>
+                                <img src="<?php echo htmlspecialchars($service['avatar_url']); ?>" class="w-full h-full object-cover">
+                            <?php else: ?>
+                                <span class="text-2xl font-bold"><?php echo $authorInitials; ?></span>
+                            <?php endif; ?>
+                        </div>
+                        <div class="flex-1 w-full">
+                            <div class="flex items-center justify-between mb-2">
+                                <h3 class="text-lg font-bold text-gray-900 hover:text-brand-600 cursor-pointer"><?php echo htmlspecialchars($author_name); ?></h3>
+                                <span class="bg-green-100 text-green-700 text-[10px] font-bold px-2.5 py-1 rounded-full border border-green-200">Active</span>
+                            </div>
+                            <p class="text-gray-600 text-sm mb-4 line-clamp-2"><?php echo !empty($service['bio']) ? htmlspecialchars($service['bio']) : 'Тайлбар оруулаагүй байна.'; ?></p>
+                            <div class="flex gap-3">
+                                <a href="user_profile.php?id=<?php echo $service['user_id']; ?>" class="px-4 py-2 border border-gray-300 rounded-xl text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors">Профайл үзэх</a>
+                                <button class="px-4 py-2 border border-gray-300 rounded-xl text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors">Зурвас бичих</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-3 gap-4 mt-6 pt-6 border-t border-gray-100">
+                        <div class="text-center">
+                            <p class="text-lg font-bold text-gray-900"><?php echo $rating; ?></p>
+                            <p class="text-xs text-gray-500 uppercase tracking-wide">Үнэлгээ</p>
+                        </div>
+                        <div class="text-center border-l border-gray-200">
+                            <p class="text-lg font-bold text-gray-900"><?php echo $service['total_completed_orders']; ?></p>
+                            <p class="text-xs text-gray-500 uppercase tracking-wide">Захиалга</p>
+                        </div>
+                        <div class="text-center border-l border-gray-200">
+                            <p class="text-lg font-bold text-gray-900"><?php echo date('Y', strtotime($service['user_joined'])); ?></p>
+                            <p class="text-xs text-gray-500 uppercase tracking-wide">Он оноос</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Reviews -->
+                <?php if(!empty($reviews)): ?>
+                <div class="bg-white rounded-2xl border border-gray-200 p-6 md:p-8 shadow-sm">
+                    <div class="flex items-center justify-between mb-8">
+                        <h2 class="text-xl font-bold text-gray-900">Сэтгэгдэл (<?php echo $service['review_count']; ?>)</h2>
+                        <div class="flex items-center gap-2">
+                            <i class="fas fa-star text-yellow-400"></i>
+                            <span class="font-bold text-gray-900"><?php echo $rating; ?></span>
+                        </div>
+                    </div>
+                    <div class="space-y-6">
+                        <?php foreach($reviews as $review): ?>
+                            <?php 
+                                $r_name = !empty($review['full_name']) ? $review['full_name'] : $review['username'];
+                                $r_avatar = $review['avatar_url'];
+                                $r_initials = getInitials($r_name);
+                                $r_color = getRandomColorClass($r_name);
+                            ?>
+                            <div class="flex gap-4 items-start">
+                                <div class="w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center overflow-hidden <?php echo $r_avatar ? 'bg-gray-200' : ($r_color['bg'] . ' ' . $r_color['text']); ?>">
+                                    <?php if($r_avatar): ?>
+                                        <img src="<?php echo htmlspecialchars($r_avatar); ?>" class="w-full h-full object-cover">
+                                    <?php else: ?>
+                                        <span class="font-bold text-xs"><?php echo $r_initials; ?></span>
+                                    <?php endif; ?>
+                                </div>
+                                <div class="flex-1">
+                                    <div class="flex items-center justify-between mb-1">
+                                        <h4 class="font-bold text-gray-900 text-sm"><?php echo htmlspecialchars($r_name); ?></h4>
+                                        <span class="text-xs text-gray-400"><?php echo timeAgo($review['created_at']); ?></span>
+                                    </div>
+                                    <div class="flex text-yellow-400 text-xs mb-2">
+                                        <?php for($i=1; $i<=5; $i++): ?>
+                                            <i class="fas fa-star<?php echo ($i <= $review['rating']) ? '' : '-o text-gray-300'; ?>"></i>
+                                        <?php endfor; ?>
+                                    </div>
+                                    <p class="text-gray-600 text-xs leading-relaxed"><?php echo htmlspecialchars($review['comment']); ?></p>
+                                </div>
+                            </div>
+                            <hr class="border-gray-100 last:hidden">
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+                <?php endif; ?>
+
+                <!-- FAQ -->
+                <?php if(!empty($faqs)): ?>
+                <div class="bg-white rounded-2xl border border-gray-200 p-6 md:p-8 shadow-sm">
+                    <h2 class="text-xl font-bold text-gray-900 mb-6">Түгээмэл асуулт</h2>
+                    <div class="space-y-4">
+                        <?php foreach($faqs as $faq): ?>
+                        <details class="group [&_summary::-webkit-details-marker]:hidden">
+                            <summary class="flex items-center justify-between cursor-pointer rounded-lg bg-gray-50 p-4 text-gray-900 font-medium hover:bg-gray-100 transition-colors text-sm">
+                                <?php echo htmlspecialchars($faq['question']); ?>
+                                <span class="shrink-0 ml-1.5 p-1.5 text-gray-900 bg-white rounded-full group-open:-rotate-180 transition-transform"><i class="fas fa-chevron-down"></i></span>
+                            </summary>
+                            <div class="mt-4 px-4 leading-relaxed text-gray-600 text-sm">
+                                <?php echo htmlspecialchars($faq['answer']); ?>
+                            </div>
+                        </details>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+                <?php endif; ?>
+            </div>
+
+            <!-- RIGHT COLUMN (Sticky) -->
+            <div class="lg:col-span-1">
+                <div class="sticky top-24 space-y-6">
+                    <div class="hidden lg:block">
+                        <h1 class="text-xl font-bold text-gray-900 leading-snug mb-2"><?php echo htmlspecialchars($service['title']); ?></h1>
+                        <div class="flex items-center gap-2 text-sm mb-4">
+                            <div class="flex text-yellow-500">
+                                <i class="fas fa-star"></i>
+                                <span class="ml-1 font-bold text-gray-900"><?php echo $rating; ?></span>
+                            </div>
+                            <span class="text-gray-300">|</span>
+                            <span class="text-gray-500"><?php echo $service['view_count']; ?> үзсэн</span>
+                        </div>
+                    </div>
+
+                    <!-- Price Card -->
+                    <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-lg shadow-gray-100/50">
+                        <div class="flex items-end gap-2 mb-6">
+                            <span class="text-3xl font-extrabold text-gray-900"><?php echo $price; ?></span>
+                            <span class="text-gray-500 mb-1 font-medium text-xs">/ эхлэх үнэ</span>
+                        </div>
+                        <div class="space-y-3 mb-6">
+                            <div class="flex items-center justify-between text-sm text-gray-600">
+                                <div class="flex items-center gap-2"><i class="far fa-clock text-brand-600 w-4"></i> Хугацаа</div>
+                                <span class="font-semibold text-gray-900"><?php echo $delivery_time; ?></span>
+                            </div>
+                            <div class="flex items-center justify-between text-sm text-gray-600">
+                                <div class="flex items-center gap-2"><i class="fas fa-sync-alt text-brand-600 w-4"></i> Засвар</div>
+                                <span class="font-semibold text-gray-900"><?php echo $service['revision_count']; ?> удаа</span>
+                            </div>
+                            <div class="flex items-center justify-between text-sm text-gray-600">
+                                <div class="flex items-center gap-2"><i class="fas fa-tasks text-brand-600 w-4"></i> Хүлээгдэж буй</div>
+                                <span class="font-semibold text-gray-900"><?php echo $service['queue_count']; ?> захиалга</span>
+                            </div>
+                        </div>
+                        <div class="space-y-3">
+                            <a href="service_payment.php?type=service&id=<?php echo $service['id']; ?>" class="w-full py-3.5 bg-brand-600 text-white rounded-xl font-bold hover:bg-brand-700 transition-all shadow-lg shadow-brand-500/30 flex items-center justify-center gap-2 transform active:scale-[0.98] btn-shine">
+                                Захиалах <i class="fas fa-arrow-right text-xs"></i>
+                            </a>
+                            <button id="saveBtn" onclick="toggleSave(<?php echo $service_id; ?>)" 
+                                    class="w-full py-3.5 bg-white border border-gray-200 text-gray-700 rounded-xl font-semibold hover:bg-gray-50 transition-colors flex items-center justify-center gap-2">
+                                <i class="<?php echo $is_saved ? 'fas' : 'far'; ?> fa-heart <?php echo $is_saved ? 'text-red-500' : ''; ?>"></i> 
+                                <span id="saveText"><?php echo $is_saved ? 'Хадгалсан' : 'Хадгалах'; ?></span>
+                            </button>
+                        </div>
+                        <div class="mt-4 text-center">
+                            <p class="text-xs text-gray-400">Төлбөрийг Filezone батлан даана.</p>
+                        </div>
+                    </div>
+
+                    <!-- Safety & Report -->
+                    <div class="bg-slate-50 rounded-2xl border border-gray-200 p-5">
+                        <h3 class="font-bold text-gray-900 mb-3 text-sm">Баталгаат үйлчилгээ</h3>
+                        <ul class="space-y-3 text-sm text-gray-600">
+                            <li class="flex items-start gap-2.5"><i class="fas fa-check-circle text-green-500 mt-0.5"></i><span>Баталгаажсан хэрэглэгч</span></li>
+                            <li class="flex items-start gap-2.5"><i class="fas fa-shield-alt text-brand-500 mt-0.5"></i><span>Төлбөрийн аюулгүй байдал</span></li>
+                        </ul>
+                    </div>
+                    <button onclick="openReportModal()" class="w-full flex items-center justify-center gap-2 text-sm text-gray-400 hover:text-red-500 transition-colors py-2">
+                        <i class="fas fa-flag"></i> Зөрчил мэдээлэх
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- RELATED SERVICES -->
+        <?php if(!empty($related_services)): ?>
+        <div class="mt-16 pt-10 border-t border-gray-200 mb-10">
+            <div class="flex items-center justify-between mb-8">
+                <h2 class="text-xl font-bold text-gray-900">Төстэй үйлчилгээнүүд</h2>
+                <a href="services.php?cat=<?php echo $service['category_id']; ?>" class="text-brand-600 font-medium hover:text-brand-700 flex items-center gap-1 text-sm">
+                    Бүгдийг үзэх <i class="fas fa-chevron-right text-xs"></i>
+                </a>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                <?php foreach($related_services as $rel): ?>
+                    <?php 
+                        $rel_img = !empty($rel['cover_image']) ? $rel['cover_image'] : 'assets/images/service-placeholder.jpg';
+                        $rel_user = !empty($rel['full_name']) ? $rel['full_name'] : $rel['username'];
+                        $rel_price = number_format($rel['price_min']) . '₮';
+                        $rel_rating = number_format($rel['rating_avg'], 1);
+                        
+                        $hasRelAvatar = !empty($rel['avatar_url']);
+                        $relInitials = getInitials($rel_user);
+                        $relColor = getRandomColorClass($rel_user);
+                    ?>
+                    <div class="group bg-white rounded-2xl border border-gray-200 overflow-hidden hover:shadow-xl hover:-translate-y-1 transition-all duration-300 flex flex-col h-full">
+                        <div class="relative aspect-[4/3] overflow-hidden flex-shrink-0">
+                            <img src="<?php echo htmlspecialchars($rel_img); ?>" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
+                        </div>
+                        <div class="p-4 flex-grow flex flex-col">
+                            <div class="flex items-center gap-2 mb-2">
+                                <div class="w-5 h-5 rounded-full overflow-hidden flex-shrink-0 flex items-center justify-center <?php echo $hasRelAvatar ? 'bg-gray-100' : ($relColor['bg'] . ' ' . $relColor['text']); ?>">
+                                    <?php if($hasRelAvatar): ?>
+                                        <img src="<?php echo htmlspecialchars($rel['avatar_url']); ?>" class="w-full h-full object-cover">
+                                    <?php else: ?>
+                                        <span class="font-bold text-[8px]"><?php echo $relInitials; ?></span>
+                                    <?php endif; ?>
+                                </div>
+                                <span class="text-xs font-medium text-gray-500 truncate"><?php echo htmlspecialchars($rel_user); ?></span>
+                            </div>
+                            <h3 class="font-bold text-gray-900 line-clamp-2 mb-3 group-hover:text-brand-600 transition-colors text-sm flex-grow">
+                                <a href="service-details.php?id=<?php echo $rel['id']; ?>">
+                                    <?php echo htmlspecialchars($rel['title']); ?>
+                                </a>
+                            </h3>
+                            <div class="flex items-center justify-between pt-3 border-t border-gray-100 mt-auto">
+                                <div class="flex items-center gap-1 text-yellow-500 text-xs font-bold">
+                                    <i class="fas fa-star"></i> <?php echo $rel_rating; ?>
+                                </div>
+                                <span class="font-bold text-gray-900 text-sm"><?php echo $rel_price; ?></span>
+                            </div>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        </div>
+        <?php endif; ?>
+
+    </main>
+</div>
+
+<!-- REPORT MODAL -->
+<div id="reportModal" class="fixed inset-0 z-50 hidden" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+    <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" onclick="closeReportModal()"></div>
+    <div class="fixed inset-0 z-10 w-screen overflow-y-auto">
+        <div class="flex min-h-full items-end justify-center p-4 text-center sm:items-center sm:p-0">
+            <div class="relative transform overflow-hidden rounded-2xl bg-white text-left shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg">
+                <div class="bg-white px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
+                    <div class="sm:flex sm:items-start">
+                        <div class="mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-red-100 sm:mx-0 sm:h-10 sm:w-10">
+                            <i class="fas fa-exclamation-triangle text-red-600"></i>
+                        </div>
+                        <div class="mt-3 text-center sm:ml-4 sm:mt-0 sm:text-left w-full">
+                            <h3 class="text-base font-semibold leading-6 text-gray-900">Зөрчил мэдээлэх</h3>
+                            <div class="mt-2">
+                                <p class="text-sm text-gray-500 mb-4">Та яагаад энэ үйлчилгээг мэдээлэх гэж байна вэ?</p>
+                                <form id="reportForm">
+                                    <input type="hidden" name="action" value="report_service">
+                                    <input type="hidden" name="service_id" value="<?php echo $service_id; ?>">
+                                    <div class="space-y-3 mb-4">
+                                        <div class="flex items-center"><input id="r1" name="reason" type="radio" value="scam" class="h-4 w-4 text-red-600"><label for="r1" class="ml-3 block text-sm text-gray-900">Залилан / Хуурамч</label></div>
+                                        <div class="flex items-center"><input id="r2" name="reason" type="radio" value="inappropriate" class="h-4 w-4 text-red-600"><label for="r2" class="ml-3 block text-sm text-gray-900">Зохимжгүй агуулга</label></div>
+                                        <div class="flex items-center"><input id="r3" name="reason" type="radio" value="spam" class="h-4 w-4 text-red-600"><label for="r3" class="ml-3 block text-sm text-gray-900">Спам / Зар сурталчилгаа</label></div>
+                                        <div class="flex items-center"><input id="r4" name="reason" type="radio" value="other" class="h-4 w-4 text-red-600"><label for="r4" class="ml-3 block text-sm text-gray-900">Бусад</label></div>
+                                    </div>
+                                    <div>
+                                        <label for="desc" class="block text-sm font-medium text-gray-900 mb-1">Дэлгэрэнгүй тайлбар</label>
+                                        <textarea id="desc" name="description" rows="3" class="block w-full rounded-md border-0 py-1.5 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-red-600 sm:text-sm sm:leading-6"></textarea>
+                                    </div>
+                                </form>
+                                <div id="reportMessage" class="mt-2 text-sm text-center hidden font-medium"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-gray-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
+                    <button type="button" onclick="submitReport()" class="inline-flex w-full justify-center rounded-md bg-red-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-500 sm:ml-3 sm:w-auto">Илгээх</button>
+                    <button type="button" onclick="closeReportModal()" class="mt-3 inline-flex w-full justify-center rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 sm:mt-0 sm:w-auto">Болих</button>
+                </div>
             </div>
         </div>
     </div>
-    
-    <!-- 2. Navbar -->
-    <nav class="bg-white border-b border-gray-200 sticky top-0 z-30">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div class="flex justify-between h-16">
-                <!-- Logo & Search -->
-                <div class="flex items-center flex-1 gap-4 lg:gap-8">
-                    <a href="index.php" class="flex-shrink-0 flex items-center gap-2">
-                        <div class="w-8 h-8 bg-brand-600 rounded-lg flex items-center justify-center text-white font-bold text-xl shadow-lg shadow-brand-500/30">F</div>
-                        <span class="font-bold text-xl tracking-tight text-gray-900 hidden sm:block">Filezone</span>
-                    </a>
+</div>
 
-                    <!-- Desktop Search -->
-                    <div class="hidden md:block w-full max-w-md relative">
-                        <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-400">
-                            <i class="fas fa-search"></i>
-                        </span>
-                        <input type="text" placeholder="Хайх: Диплом, Гэрээ, Орчуулга..." 
-                            class="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all shadow-sm">
-                    </div>
-                </div>
+<?php include 'includes/footer.php' ?>
 
-                <!-- Right Side Actions -->
-                <div class="flex items-center gap-4">
-                    <a href="upload.php" class="hidden md:flex items-center gap-2 bg-gradient-to-r from-orange-500 to-red-500 text-white px-5 py-2 rounded-full font-bold text-sm shadow-lg shadow-orange-500/30 hover:shadow-orange-500/50 transform hover:-translate-y-0.5 transition-all btn-shine">
-                        <i class="fas fa-cloud-upload-alt"></i>
-                        Файл оруулах
-                    </a>
+<script>
+    // Gallery Image Switcher
+    function changeImage(src, btn) {
+        const mainImage = document.getElementById('mainImage');
+        mainImage.style.opacity = '0.5';
+        setTimeout(() => {
+            mainImage.src = src;
+            mainImage.style.opacity = '1';
+        }, 150);
+        document.querySelectorAll('.thumbnail-btn').forEach(el => {
+            el.classList.remove('border-brand-500');
+            el.classList.add('border-gray-200');
+        });
+        btn.classList.remove('border-gray-200');
+        btn.classList.add('border-brand-500');
+    }
 
-                    <div class="h-8 w-px bg-gray-200 hidden md:block mx-1"></div>
+    // Toggle Save Function (API)
+    async function toggleSave(serviceId) {
+        const btn = document.getElementById('saveBtn');
+        const icon = btn.querySelector('i');
+        const text = document.getElementById('saveText');
+        const originalText = text.innerText;
 
-                    <button class="md:hidden p-2 text-gray-500 hover:bg-gray-100 rounded-lg" onclick="toggleMenu()">
-                        <i class="fas fa-bars text-xl"></i>
-                    </button>
-                    
-                    <div class="hidden md:flex items-center gap-3">
-                        <a href="login.php" class="text-gray-500 hover:text-brand-600 font-semibold text-sm px-3 py-2 transition-colors">Нэвтрэх</a>
-                        <a href="register.php" class="bg-slate-700 hover:bg-slate-800 text-white text-sm font-bold px-5 py-2.5 rounded-lg transition-all shadow-sm border border-slate-700">
-                            Бүртгүүлэх
-                        </a>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </nav>
+        text.innerText = 'Уншиж байна...';
+        btn.disabled = true;
 
-    <div class="flex flex-1 max-w-7xl mx-auto w-full">
+        try {
+            const formData = new FormData();
+            formData.append('action', 'toggle_save_service');
+            formData.append('id', serviceId);
+
+            const response = await fetch('api/toggle_save.php', { method: 'POST', body: formData });
+            const result = await response.json();
+
+            if (result.success) {
+                if (result.status === 'saved') {
+                    icon.classList.remove('far');
+                    icon.classList.add('fas', 'text-red-500');
+                    text.innerText = 'Хадгалсан';
+                } else {
+                    icon.classList.remove('fas', 'text-red-500');
+                    icon.classList.add('far');
+                    text.innerText = 'Хадгалах';
+                }
+            } else {
+                if (result.message === 'Login required') {
+                    // Optional: Redirect to login or show login modal
+                    alert('Та нэвтэрсний дараа хадгалах боломжтой.');
+                } else {
+                    alert(result.message);
+                    text.innerText = originalText;
+                }
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            alert('Алдаа гарлаа.');
+            text.innerText = originalText;
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    // Report Modal Logic
+    function openReportModal() { document.getElementById('reportModal').classList.remove('hidden'); }
+    function closeReportModal() { 
+        document.getElementById('reportModal').classList.add('hidden'); 
+        document.getElementById('reportMessage').classList.add('hidden');
+        document.getElementById('reportForm').reset();
+    }
+
+    async function submitReport() {
+        const form = document.getElementById('reportForm');
+        const formData = new FormData(form);
+        const msgBox = document.getElementById('reportMessage');
         
-        <!-- Sidebar Navigation -->
-        <aside class="hidden lg:block w-64 flex-shrink-0 py-6 pr-6 h-[calc(100vh-64px)] sticky top-16 overflow-y-auto no-scrollbar">
-            <!-- Mini Upload CTA -->
-            <div class="mb-6 p-4 rounded-xl bg-gradient-to-br from-gray-900 to-gray-800 text-white shadow-xl">
-                <div class="flex items-center gap-3 mb-2">
-                    <div class="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
-                        <i class="fas fa-wallet text-yellow-400"></i>
-                    </div>
-                    <span class="font-bold text-sm">Мөнгө олох уу?</span>
-                </div>
-                <p class="text-xs text-gray-300 mb-3 leading-relaxed">Хэрэггүй файлаа устгах биш, бусдад зарж орлого ол!</p>
-                <a href="upload.php" class="block w-full text-center bg-white text-gray-900 py-1.5 rounded-lg text-xs font-bold hover:bg-gray-100 transition">
-                    Эхлэх &rarr;
-                </a>
-            </div>
-
-            <!-- Menu Links -->
-            <div class="space-y-1 mb-6">
-                <h3 class="px-3 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Үндсэн</h3>
-                <a href="index.php" class="flex items-center gap-3 px-3 py-2 text-gray-600 hover:bg-gray-100 hover:text-gray-900 rounded-lg font-medium transition-colors">
-                    <i class="fas fa-home w-5 text-center"></i> Нүүр хуудас
-                </a>
-                <a href="browse-files.php" class="flex items-center gap-3 px-3 py-2 text-gray-600 hover:bg-gray-100 hover:text-gray-900 rounded-lg font-medium transition-colors">
-                    <i class="fas fa-folder-open w-5 text-center"></i> Файлууд
-                </a>
-                <a href="#" class="flex items-center gap-3 px-3 py-2 text-gray-600 hover:bg-gray-100 hover:text-gray-900 rounded-lg font-medium transition-colors">
-                    <i class="fas fa-fire w-5 text-center text-orange-500"></i> Эрэлттэй
-                </a>
-            </div>
-
-             <!-- Services Menu -->
-             <div class="space-y-1 mb-8">
-                <div class="flex items-center justify-between px-3 mb-2">
-                    <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Freelance / Үйлчилгээ</h3>
-                </div>
-                <a href="services.php" class="flex items-center gap-3 px-3 py-2 text-brand-600 bg-brand-50 rounded-lg font-medium">
-                    <div class="w-5 h-5 rounded bg-brand-100 text-brand-600 flex items-center justify-center transition">
-                        <i class="fas fa-briefcase text-xs"></i>
-                    </div>
-                    Үйлчилгээнүүд
-                </a>
-                <a href="services.php?cat=design" class="flex items-center gap-3 px-3 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-medium group">
-                    <div class="w-5 h-5 rounded bg-purple-100 text-purple-600 flex items-center justify-center group-hover:bg-purple-600 group-hover:text-white transition">
-                        <i class="fas fa-pen-nib text-xs"></i>
-                    </div>
-                    Дизайн & График
-                </a>
-                <a href="services.php?cat=web" class="flex items-center gap-3 px-3 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-medium group">
-                    <div class="w-5 h-5 rounded bg-blue-100 text-blue-600 flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition">
-                        <i class="fas fa-code text-xs"></i>
-                    </div>
-                    Вэб хөгжүүлэлт
-                </a>
-            </div>
-        </aside>
-
-        <!-- Main Content Area -->
-        <main class="flex-1 py-6 px-4 lg:px-0 min-w-0">
+        try {
+            const response = await fetch(window.location.href, { method: 'POST', body: formData });
+            const result = await response.json();
             
-            <!-- Breadcrumb -->
-            <nav class="flex mb-6 text-xs text-gray-500 overflow-x-auto no-scrollbar whitespace-nowrap">
-                <a href="index.php" class="hover:text-brand-600 transition-colors">Нүүр</a>
-                <span class="mx-2 text-gray-300">/</span>
-                <a href="services.php" class="hover:text-brand-600 transition-colors">Үйлчилгээ</a>
-                <span class="mx-2 text-gray-300">/</span>
-                <span class="font-medium text-gray-900"><?php echo $service['category']; ?></span>
-            </nav>
+            msgBox.textContent = result.message;
+            msgBox.classList.remove('hidden', 'text-green-600', 'text-red-600');
+            msgBox.classList.add(result.success ? 'text-green-600' : 'text-red-600');
 
-            <!-- Title & Meta (Mobile only header) -->
-            <div class="lg:hidden mb-6">
-                <h1 class="text-2xl font-bold text-gray-900 mb-3 leading-snug"><?php echo $service['title']; ?></h1>
-                <div class="flex items-center gap-4 text-sm">
-                    <div class="flex items-center gap-2">
-                        <img src="<?php echo $service['author_avatar']; ?>" class="w-6 h-6 rounded-full object-cover">
-                        <span class="font-medium text-gray-900"><?php echo $service['author']; ?></span>
-                    </div>
-                    <div class="flex items-center text-yellow-500">
-                        <i class="fas fa-star mr-1"></i>
-                        <span class="font-bold text-gray-900"><?php echo $service['rating']; ?></span>
-                        <span class="text-gray-400 ml-1">(<?php echo $service['review_count']; ?>)</span>
-                    </div>
-                </div>
-            </div>
-
-            <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                
-                <!-- Left Column: Media & Details (66% width) -->
-                <div class="lg:col-span-2 space-y-8">
-                    
-                    <!-- Image Gallery -->
-                    <div class="space-y-4">
-                        <div class="aspect-video w-full bg-gray-100 rounded-2xl overflow-hidden border border-gray-200 group relative">
-                            <!-- Main Image Placeholder -->
-                            <img src="https://images.unsplash.com/photo-1554224155-6726b3ff858f?ixlib=rb-1.2.1&auto=format&fit=crop&w=1200&q=80" alt="Service Main Image" class="w-full h-full object-cover">
-                            
-                            <!-- Gallery Navigation Arrows (Optional) -->
-                            <button class="absolute left-4 top-1/2 -translate-y-1/2 bg-white/90 p-2 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white text-gray-700">
-                                <i class="fas fa-chevron-left"></i>
-                            </button>
-                            <button class="absolute right-4 top-1/2 -translate-y-1/2 bg-white/90 p-2 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white text-gray-700">
-                                <i class="fas fa-chevron-right"></i>
-                            </button>
-                        </div>
-                        
-                        <!-- Thumbnails -->
-                        <div class="flex gap-4 overflow-x-auto pb-2 no-scrollbar">
-                            <button class="w-20 h-20 flex-shrink-0 rounded-xl border-2 border-brand-500 overflow-hidden p-0.5">
-                                <img src="https://images.unsplash.com/photo-1554224155-6726b3ff858f?ixlib=rb-1.2.1&auto=format&fit=crop&w=150&q=80" class="w-full h-full object-cover rounded-lg">
-                            </button>
-                            <button class="w-20 h-20 flex-shrink-0 rounded-xl border border-gray-200 overflow-hidden hover:border-gray-300">
-                                <img src="https://images.unsplash.com/photo-1460925895917-afdab827c52f?ixlib=rb-1.2.1&auto=format&fit=crop&w=150&q=80" class="w-full h-full object-cover">
-                            </button>
-                            <button class="w-20 h-20 flex-shrink-0 rounded-xl border border-gray-200 overflow-hidden hover:border-gray-300">
-                                <img src="https://images.unsplash.com/photo-1554224154-260327c00c19?ixlib=rb-1.2.1&auto=format&fit=crop&w=150&q=80" class="w-full h-full object-cover">
-                            </button>
-                        </div>
-                    </div>
-
-                    <!-- Description Section -->
-                    <div class="bg-white rounded-2xl border border-gray-200 p-6 md:p-8 shadow-sm">
-                        <h2 class="text-xl font-bold text-gray-900 mb-6">Үйлчилгээний тухай</h2>
-                        <div class="prose max-w-none text-gray-600 text-sm">
-                            <?php echo $service['description']; ?>
-                        </div>
-                        
-                        <!-- Service Attributes -->
-                        <div class="grid grid-cols-2 md:grid-cols-3 gap-6 mt-8 pt-8 border-t border-gray-100">
-                            <div>
-                                <p class="text-xs text-gray-500 mb-1">Файлын төрөл</p>
-                                <p class="font-medium text-gray-900 text-sm">PDF, Excel, Word</p>
-                            </div>
-                            <div>
-                                <p class="text-xs text-gray-500 mb-1">Хэл</p>
-                                <p class="font-medium text-gray-900 text-sm">Монгол, Англи</p>
-                            </div>
-                            <div>
-                                <p class="text-xs text-gray-500 mb-1">Засвар хийх</p>
-                                <p class="font-medium text-gray-900 text-sm">2 удаа үнэгүй</p>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Author Profile Card -->
-                    <div class="bg-white rounded-2xl border border-gray-200 p-6 md:p-8 shadow-sm">
-                        <h2 class="text-xl font-bold text-gray-900 mb-6">Гүйцэтгэгч</h2>
-                        <div class="flex flex-col sm:flex-row gap-6 items-start">
-                            <div class="w-20 h-20 rounded-full bg-gray-100 flex-shrink-0 overflow-hidden border border-gray-200">
-                                <img src="<?php echo $service['author_avatar']; ?>" class="w-full h-full object-cover">
-                            </div>
-                            <div class="flex-1">
-                                <div class="flex items-center justify-between mb-2">
-                                    <h3 class="text-lg font-bold text-gray-900 hover:text-brand-600 cursor-pointer"><?php echo $service['author']; ?></h3>
-                                    <span class="bg-green-100 text-green-700 text-[10px] font-bold px-2.5 py-1 rounded-full border border-green-200">
-                                        Online
-                                    </span>
-                                </div>
-                                <p class="text-gray-600 text-sm mb-4 line-clamp-2">Санхүүгийн мэргэжлээр 10 жил ажилласан туршлагатай. Бүх төрлийн тайлан тооцоог чанарын өндөр түвшинд хийж гүйцэтгэнэ.</p>
-                                <div class="flex gap-3">
-                                    <a href="profile.php" class="px-4 py-2 border border-gray-300 rounded-xl text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors">Профайл үзэх</a>
-                                    <button class="px-4 py-2 border border-gray-300 rounded-xl text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors">Зурвас бичих</button>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Author Stats -->
-                        <div class="grid grid-cols-3 gap-4 mt-6 pt-6 border-t border-gray-100">
-                            <div class="text-center">
-                                <p class="text-lg font-bold text-gray-900">4.9</p>
-                                <p class="text-xs text-gray-500 uppercase tracking-wide">Үнэлгээ</p>
-                            </div>
-                            <div class="text-center border-l border-gray-200">
-                                <p class="text-lg font-bold text-gray-900">142</p>
-                                <p class="text-xs text-gray-500 uppercase tracking-wide">Захиалга</p>
-                            </div>
-                            <div class="text-center border-l border-gray-200">
-                                <p class="text-lg font-bold text-gray-900">100%</p>
-                                <p class="text-xs text-gray-500 uppercase tracking-wide">Хариулах</p>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Reviews Section -->
-                    <div class="bg-white rounded-2xl border border-gray-200 p-6 md:p-8 shadow-sm" id="reviews">
-                        <div class="flex items-center justify-between mb-8">
-                            <h2 class="text-xl font-bold text-gray-900">Сэтгэгдэл (<?php echo $service['review_count']; ?>)</h2>
-                            <div class="flex items-center gap-2">
-                                <div class="flex text-yellow-400 text-sm">
-                                    <i class="fas fa-star"></i>
-                                    <i class="fas fa-star"></i>
-                                    <i class="fas fa-star"></i>
-                                    <i class="fas fa-star"></i>
-                                    <i class="fas fa-star-half-alt"></i>
-                                </div>
-                                <span class="font-bold text-gray-900"><?php echo $service['rating']; ?></span>
-                            </div>
-                        </div>
-
-                        <!-- Single Review -->
-                        <div class="space-y-6">
-                            <div class="flex gap-4 items-start">
-                                <div class="w-10 h-10 rounded-full bg-gray-200 flex-shrink-0 flex items-center justify-center text-gray-500 font-bold text-xs">
-                                    B
-                                </div>
-                                <div class="flex-1">
-                                    <div class="flex items-center justify-between mb-1">
-                                        <h4 class="font-bold text-gray-900 text-sm">Boldoo User</h4>
-                                        <span class="text-xs text-gray-400">2 өдрийн өмнө</span>
-                                    </div>
-                                    <div class="flex text-yellow-400 text-xs mb-2">
-                                        <i class="fas fa-star"></i><i class="fas fa-star"></i><i class="fas fa-star"></i><i class="fas fa-star"></i><i class="fas fa-star"></i>
-                                    </div>
-                                    <p class="text-gray-600 text-xs leading-relaxed">Маш хурдан, чанартай хийж өгсөн. Баярлалаа!</p>
-                                </div>
-                            </div>
-                            <hr class="border-gray-100">
-                             <div class="flex gap-4 items-start">
-                                <div class="w-10 h-10 rounded-full bg-gray-200 flex-shrink-0 flex items-center justify-center text-gray-500 font-bold text-xs">
-                                    S
-                                </div>
-                                <div class="flex-1">
-                                    <div class="flex items-center justify-between mb-1">
-                                        <h4 class="font-bold text-gray-900 text-sm">Saraa</h4>
-                                        <span class="text-xs text-gray-400">1 долоо хоногийн өмнө</span>
-                                    </div>
-                                    <div class="flex text-yellow-400 text-xs mb-2">
-                                        <i class="fas fa-star"></i><i class="fas fa-star"></i><i class="fas fa-star"></i><i class="fas fa-star"></i><i class="far fa-star"></i>
-                                    </div>
-                                    <p class="text-gray-600 text-xs leading-relaxed">Дажгүй шүү. Гэхдээ бага зэрэг удаж байж хариу өгсөн.</p>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <button class="w-full mt-6 py-2.5 border border-gray-200 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors">
-                            Бүх сэтгэгдлийг харах
-                        </button>
-                    </div>
-
-                    <!-- FAQ -->
-                    <div class="bg-white rounded-2xl border border-gray-200 p-6 md:p-8 shadow-sm">
-                        <h2 class="text-xl font-bold text-gray-900 mb-6">Түгээмэл асуулт</h2>
-                        <div class="space-y-4">
-                            <details class="group [&_summary::-webkit-details-marker]:hidden">
-                                <summary class="flex items-center justify-between cursor-pointer rounded-lg bg-gray-50 p-4 text-gray-900 font-medium hover:bg-gray-100 transition-colors text-sm">
-                                    Тайлан гарахад хэр хугацаа шаардах вэ?
-                                    <span class="shrink-0 ml-1.5 p-1.5 text-gray-900 bg-white rounded-full group-open:-rotate-180 transition-transform">
-                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-                                        </svg>
-                                    </span>
-                                </summary>
-                                <div class="mt-4 px-4 leading-relaxed text-gray-600 text-sm">
-                                    Бичиг баримт бүрэн бол ажлын 2-3 хоногт багтаан гаргаж өгнө. Яаралтай горимоор 24 цагийн дотор гаргах боломжтой (нэмэлт төлбөртэй).
-                                </div>
-                            </details>
-                            <details class="group [&_summary::-webkit-details-marker]:hidden">
-                                <summary class="flex items-center justify-between cursor-pointer rounded-lg bg-gray-50 p-4 text-gray-900 font-medium hover:bg-gray-100 transition-colors text-sm">
-                                    НӨАТ-ын баримт өгөх үү?
-                                    <span class="shrink-0 ml-1.5 p-1.5 text-gray-900 bg-white rounded-full group-open:-rotate-180 transition-transform">
-                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-                                        </svg>
-                                    </span>
-                                </summary>
-                                <div class="mt-4 px-4 leading-relaxed text-gray-600 text-sm">
-                                    Тиймээ, байгууллагын нэр дээр и-баримт шивж өгөх боломжтой.
-                                </div>
-                            </details>
-                        </div>
-                    </div>
-
-                </div>
-
-                <!-- Right Column: Sidebar (33% width) - Sticky on Desktop -->
-                <div class="lg:col-span-1">
-                    <div class="sticky top-24 space-y-6">
-                        
-                        <!-- Desktop Title (Hidden on mobile) -->
-                        <div class="hidden lg:block">
-                            <h1 class="text-xl font-bold text-gray-900 leading-snug mb-2"><?php echo $service['title']; ?></h1>
-                            <div class="flex items-center gap-2 text-sm mb-4">
-                                <div class="flex text-yellow-500">
-                                    <i class="fas fa-star"></i>
-                                    <span class="ml-1 font-bold text-gray-900"><?php echo $service['rating']; ?></span>
-                                </div>
-                                <span class="text-gray-300">|</span>
-                                <span class="text-gray-500"><?php echo $service['views']; ?> үзсэн</span>
-                            </div>
-                        </div>
-
-                        <!-- Price & Action Card -->
-                        <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-lg shadow-gray-100/50">
-                            <div class="flex items-end gap-2 mb-6">
-                                <span class="text-3xl font-extrabold text-gray-900"><?php echo $service['price']; ?></span>
-                                <span class="text-gray-500 mb-1 font-medium text-xs">/ эхлэх үнэ</span>
-                            </div>
-
-                            <div class="space-y-3 mb-6">
-                                <div class="flex items-center justify-between text-sm text-gray-600">
-                                    <div class="flex items-center gap-2">
-                                        <i class="far fa-clock text-brand-600 w-4"></i> Хугацаа
-                                    </div>
-                                    <span class="font-semibold text-gray-900"><?php echo $service['delivery_days']; ?> хоног</span>
-                                </div>
-                                <div class="flex items-center justify-between text-sm text-gray-600">
-                                    <div class="flex items-center gap-2">
-                                        <i class="fas fa-sync-alt text-brand-600 w-4"></i> Засвар
-                                    </div>
-                                    <span class="font-semibold text-gray-900">2 удаа</span>
-                                </div>
-                                <div class="flex items-center justify-between text-sm text-gray-600">
-                                    <div class="flex items-center gap-2">
-                                        <i class="fas fa-tasks text-brand-600 w-4"></i> Хүлээгдэж буй
-                                    </div>
-                                    <span class="font-semibold text-gray-900"><?php echo $service['orders_queue']; ?> захиалга</span>
-                                </div>
-                            </div>
-
-                            <div class="space-y-3">
-                                <button class="w-full py-3.5 bg-brand-600 text-white rounded-xl font-bold hover:bg-brand-700 transition-all shadow-lg shadow-brand-500/30 flex items-center justify-center gap-2 transform active:scale-[0.98] btn-shine">
-                                    Захиалах <i class="fas fa-arrow-right text-xs"></i>
-                                </button>
-                                <button class="w-full py-3.5 bg-white border border-gray-200 text-gray-700 rounded-xl font-semibold hover:bg-gray-50 transition-colors flex items-center justify-center gap-2">
-                                    <i class="far fa-heart"></i> Хадгалах
-                                </button>
-                            </div>
-                            
-                            <div class="mt-4 text-center">
-                                <p class="text-xs text-gray-400">Төлбөрийг Filezone батлан даана. Ажил дууссаны дараа мөнгийг шилжүүлнэ.</p>
-                            </div>
-                        </div>
-
-                        <!-- Safety Card -->
-                        <div class="bg-slate-50 rounded-2xl border border-gray-200 p-5">
-                            <h3 class="font-bold text-gray-900 mb-3 text-sm">Баталгаат үйлчилгээ</h3>
-                            <ul class="space-y-3 text-sm text-gray-600">
-                                <li class="flex items-start gap-2.5">
-                                    <i class="fas fa-check-circle text-green-500 mt-0.5"></i>
-                                    <span>Баталгаажсан хэрэглэгч</span>
-                                </li>
-                                <li class="flex items-start gap-2.5">
-                                    <i class="fas fa-shield-alt text-brand-500 mt-0.5"></i>
-                                    <span>Төлбөрийн аюулгүй байдал</span>
-                                </li>
-                                <li class="flex items-start gap-2.5">
-                                    <i class="fas fa-headset text-purple-500 mt-0.5"></i>
-                                    <span>24/7 тусламж үйлчилгээ</span>
-                                </li>
-                            </ul>
-                        </div>
-                        
-                        <!-- Report Button -->
-                        <button class="w-full flex items-center justify-center gap-2 text-sm text-gray-400 hover:text-red-500 transition-colors py-2">
-                            <i class="fas fa-flag"></i> Зөрчил мэдээлэх
-                        </button>
-
-                    </div>
-                </div>
-
-            </div>
-
-            <!-- Related Services (Bottom Section) -->
-            <div class="mt-16 pt-10 border-t border-gray-200 mb-10">
-                <div class="flex items-center justify-between mb-8">
-                    <h2 class="text-xl font-bold text-gray-900">Төстэй үйлчилгээнүүд</h2>
-                    <a href="#" class="text-brand-600 font-medium hover:text-brand-700 flex items-center gap-1 text-sm">
-                        Бүгдийг үзэх <i class="fas fa-chevron-right text-xs"></i>
-                    </a>
-                </div>
-                
-                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                    <!-- Related Card 1 -->
-                    <div class="group bg-white rounded-2xl border border-gray-200 overflow-hidden hover:shadow-xl hover:-translate-y-1 transition-all duration-300">
-                        <div class="relative aspect-[4/3] overflow-hidden">
-                            <img src="https://images.unsplash.com/photo-1542744173-8e7e53415bb0?ixlib=rb-1.2.1&auto=format&fit=crop&w=400&q=80" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
-                        </div>
-                        <div class="p-4">
-                            <div class="flex items-center gap-2 mb-2">
-                                <img src="assets/images/default-avatar.png" class="w-5 h-5 rounded-full bg-gray-200">
-                                <span class="text-xs font-medium text-gray-500">Bat-Erdene</span>
-                            </div>
-                            <h3 class="font-bold text-gray-900 line-clamp-2 mb-3 group-hover:text-brand-600 transition-colors text-sm">Бизнес төлөвлөгөө боловсруулна</h3>
-                            <div class="flex items-center justify-between pt-3 border-t border-gray-100">
-                                <div class="flex items-center gap-1 text-yellow-500 text-xs font-bold">
-                                    <i class="fas fa-star"></i> 5.0
-                                </div>
-                                <span class="font-bold text-gray-900 text-sm">200,000₮</span>
-                            </div>
-                        </div>
-                    </div>
-                     <!-- Related Card 2 -->
-                     <div class="group bg-white rounded-2xl border border-gray-200 overflow-hidden hover:shadow-xl hover:-translate-y-1 transition-all duration-300">
-                        <div class="relative aspect-[4/3] overflow-hidden">
-                            <img src="https://images.unsplash.com/photo-1551288049-bebda4e38f71?ixlib=rb-1.2.1&auto=format&fit=crop&w=400&q=80" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
-                        </div>
-                        <div class="p-4">
-                            <div class="flex items-center gap-2 mb-2">
-                                <img src="assets/images/default-avatar.png" class="w-5 h-5 rounded-full bg-gray-200">
-                                <span class="text-xs font-medium text-gray-500">Sarnai</span>
-                            </div>
-                            <h3 class="font-bold text-gray-900 line-clamp-2 mb-3 group-hover:text-brand-600 transition-colors text-sm">Excel програм дээр автоматжуулалт хийнэ</h3>
-                            <div class="flex items-center justify-between pt-3 border-t border-gray-100">
-                                <div class="flex items-center gap-1 text-yellow-500 text-xs font-bold">
-                                    <i class="fas fa-star"></i> 4.5
-                                </div>
-                                <span class="font-bold text-gray-900 text-sm">50,000₮</span>
-                            </div>
-                        </div>
-                    </div>
-                     <!-- Related Card 3 -->
-                     <div class="group bg-white rounded-2xl border border-gray-200 overflow-hidden hover:shadow-xl hover:-translate-y-1 transition-all duration-300">
-                        <div class="relative aspect-[4/3] overflow-hidden">
-                            <img src="https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?ixlib=rb-1.2.1&auto=format&fit=crop&w=400&q=80" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
-                        </div>
-                        <div class="p-4">
-                            <div class="flex items-center gap-2 mb-2">
-                                <img src="assets/images/default-avatar.png" class="w-5 h-5 rounded-full bg-gray-200">
-                                <span class="text-xs font-medium text-gray-500">Tuya</span>
-                            </div>
-                            <h3 class="font-bold text-gray-900 line-clamp-2 mb-3 group-hover:text-brand-600 transition-colors text-sm">НДШ болон ХХОАТ-ын тайлан гаргана</h3>
-                            <div class="flex items-center justify-between pt-3 border-t border-gray-100">
-                                <div class="flex items-center gap-1 text-yellow-500 text-xs font-bold">
-                                    <i class="fas fa-star"></i> 5.0
-                                </div>
-                                <span class="font-bold text-gray-900 text-sm">80,000₮</span>
-                            </div>
-                        </div>
-                    </div>
-                     <!-- Related Card 4 -->
-                     <div class="group bg-white rounded-2xl border border-gray-200 overflow-hidden hover:shadow-xl hover:-translate-y-1 transition-all duration-300">
-                        <div class="relative aspect-[4/3] overflow-hidden">
-                            <img src="https://images.unsplash.com/photo-1557804506-669a67965ba0?ixlib=rb-1.2.1&auto=format&fit=crop&w=400&q=80" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
-                        </div>
-                        <div class="p-4">
-                            <div class="flex items-center gap-2 mb-2">
-                                <img src="assets/images/default-avatar.png" class="w-5 h-5 rounded-full bg-gray-200">
-                                <span class="text-xs font-medium text-gray-500">User123</span>
-                            </div>
-                            <h3 class="font-bold text-gray-900 line-clamp-2 mb-3 group-hover:text-brand-600 transition-colors text-sm">PowerPoint танилцуулга бэлтгэнэ</h3>
-                            <div class="flex items-center justify-between pt-3 border-t border-gray-100">
-                                <div class="flex items-center gap-1 text-yellow-500 text-xs font-bold">
-                                    <i class="fas fa-star"></i> 4.0
-                                </div>
-                                <span class="font-bold text-gray-900 text-sm">40,000₮</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <?php include 'includes/footer.php' ?>
+            if (result.success) { setTimeout(closeReportModal, 2000); }
+        } catch (error) {
+            console.error('Error:', error);
+            msgBox.textContent = 'Алдаа гарлаа. Та дахин оролдоно уу.';
+            msgBox.classList.remove('hidden');
+            msgBox.classList.add('text-red-600');
+        }
+    }
+</script>
