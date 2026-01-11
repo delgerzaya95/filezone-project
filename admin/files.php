@@ -20,6 +20,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if (isset($_POST['action'])) {
+        // UPDATE FILE
         if ($_POST['action'] === 'update_file') {
             $id = intval($_POST['file_id']);
             $title = trim($_POST['title']);
@@ -39,16 +40,74 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
+        // DELETE FILE
         if ($_POST['action'] === 'delete_file') {
             $id = intval($_POST['file_id']);
             try {
-                // Файлыг устгахын өмнө физик файлыг устгах логик энд байж болно
-                // Одоогоор зөвхөн DB-ээс устгая
-                $stmt = $pdo->prepare("DELETE FROM files WHERE id = ?");
+                // 1. Файлын мэдээллийг авах (замыг олохын тулд)
+                $stmt = $pdo->prepare("SELECT file_url FROM files WHERE id = ?");
                 $stmt->execute([$id]);
-                jsonResponse(true, 'Файл амжилттай устгагдлаа.');
+                $file = $stmt->fetch(PDO::FETCH_ASSOC);
+
+                if ($file) {
+                    // 2. Үндсэн файлыг серверээс устгах
+                    // Админ фолдероос нэг түвшин дээш гараад uploads руу орно: ../uploads/...
+                    $file_path = '../' . $file['file_url']; 
+                    if (!empty($file['file_url']) && file_exists($file_path)) {
+                        unlink($file_path);
+                    }
+                    
+                    // Хавтас цэвэрлэх бэлтгэл
+                    $file_dir = dirname($file_path);
+
+                    // 3. Preview зургуудыг устгах
+                    $p_stmt = $pdo->prepare("SELECT preview_url FROM file_previews WHERE file_id = ?");
+                    $p_stmt->execute([$id]);
+                    $previews = $p_stmt->fetchAll(PDO::FETCH_ASSOC);
+
+                    foreach ($previews as $row) {
+                        $img_path = '../' . $row['preview_url'];
+                        if (!empty($row['preview_url']) && file_exists($img_path)) {
+                            unlink($img_path);
+                        }
+                    }
+
+                    // 4. Хоосон хавтаснуудыг устгах
+                    $previews_dir = $file_dir . '/previews';
+                    if (is_dir($previews_dir)) @rmdir($previews_dir);
+                    if (is_dir($file_dir)) @rmdir($file_dir);
+
+                    // 5. DB-ээс устгах
+                    $del_stmt = $pdo->prepare("DELETE FROM files WHERE id = ?");
+                    $del_stmt->execute([$id]);
+                    
+                    jsonResponse(true, 'Файл болон холбогдох өгөгдөл бүрэн устгагдлаа.');
+                } else {
+                    jsonResponse(false, 'Файл олдсонгүй.');
+                }
             } catch (PDOException $e) {
                 jsonResponse(false, 'Database error: ' . $e->getMessage());
+            }
+        }
+        
+        // GET PREVIEWS (Модал цонхонд зураг харуулах)
+        if ($_POST['action'] === 'get_previews') {
+            $id = intval($_POST['file_id']);
+            try {
+                $stmt = $pdo->prepare("SELECT preview_url FROM file_previews WHERE file_id = ? ORDER BY order_index ASC");
+                $stmt->execute([$id]);
+                $previews = $stmt->fetchAll(PDO::FETCH_COLUMN);
+                
+                // Замд ../ нэмж өгөх (админ хэсгээс харагдах байдлаар)
+                $formatted_previews = array_map(function($url) {
+                    return '../' . $url;
+                }, $previews);
+                
+                echo json_encode(['success' => true, 'previews' => $formatted_previews]);
+                exit;
+            } catch (PDOException $e) {
+                echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+                exit;
             }
         }
     }
@@ -161,6 +220,8 @@ function getFileIcon($type) {
     <style>
         .modal { transition: opacity 0.25s ease; }
         body.modal-active { overflow-x: hidden; overflow-y: visible !important; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 </head>
 <body class="font-sans text-slate-800 antialiased bg-slate-50">
@@ -180,7 +241,7 @@ function getFileIcon($type) {
                     <h1 class="text-xl font-bold text-slate-800">Файлын удирдлага</h1>
                 </div>
                 <div class="flex items-center gap-3">
-                    <a href="../upload.php" target="_blank" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition shadow-sm">
+                    <a href="file_upload.php" target="_blank" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition shadow-sm">
                         <i class="fas fa-cloud-upload-alt"></i> <span class="hidden sm:inline">Файл нэмэх</span>
                     </a>
                 </div>
@@ -251,7 +312,7 @@ function getFileIcon($type) {
                                                     <i class="fas <?php echo getFileIcon($file['file_type']); ?>"></i>
                                                 </div>
                                                 <div class="min-w-0">
-                                                    <p class="text-sm font-semibold text-slate-800 hover:text-indigo-600 cursor-pointer truncate max-w-xs" title="<?php echo htmlspecialchars($file['title']); ?>">
+                                                    <p class="text-sm font-semibold text-slate-800 hover:text-indigo-600 cursor-pointer truncate max-w-xs" onclick='openEditModal(<?php echo json_encode($file); ?>)' title="<?php echo htmlspecialchars($file['title']); ?>">
                                                         <?php echo htmlspecialchars($file['title']); ?>
                                                     </p>
                                                     <p class="text-xs text-slate-500 mt-0.5">
@@ -299,7 +360,7 @@ function getFileIcon($type) {
                                         </td>
                                         <td class="px-6 py-4 text-right">
                                             <div class="flex items-center justify-end gap-2">
-                                                <button onclick='openEditModal(<?php echo json_encode($file); ?>)' class="p-1.5 text-slate-400 hover:text-indigo-600 rounded hover:bg-indigo-50 transition" title="Засах">
+                                                <button onclick='openEditModal(<?php echo json_encode($file); ?>)' class="p-1.5 text-slate-400 hover:text-indigo-600 rounded hover:bg-indigo-50 transition" title="Засах / Дэлгэрэнгүй">
                                                     <i class="fas fa-pen"></i>
                                                 </button>
                                                 <?php if(!empty($file['file_url'])): ?>
@@ -350,52 +411,99 @@ function getFileIcon($type) {
         </div>
     </div>
     
-    <!-- Edit Modal -->
+    <!-- Edit/View Modal -->
     <div id="editModal" class="modal opacity-0 pointer-events-none fixed w-full h-full top-0 left-0 flex items-center justify-center z-50">
         <div class="modal-overlay absolute w-full h-full bg-gray-900 opacity-50"></div>
         
-        <div class="modal-container bg-white w-11/12 md:max-w-lg mx-auto rounded shadow-lg z-50 overflow-y-auto">
+        <div class="modal-container bg-white w-11/12 md:max-w-4xl mx-auto rounded-xl shadow-xl z-50 overflow-hidden flex flex-col max-h-[90vh]">
             <!-- Header -->
-            <div class="flex justify-between items-center px-6 py-4 border-b">
-                <p class="text-lg font-bold text-slate-800">Файл засах</p>
-                <div class="modal-close cursor-pointer z-50 text-slate-500 hover:text-slate-800" onclick="closeEditModal()">
-                    <i class="fas fa-times"></i>
+            <div class="flex justify-between items-center px-6 py-4 border-b bg-gray-50">
+                <p class="text-lg font-bold text-slate-800">Файлын дэлгэрэнгүй & Засах</p>
+                <div class="modal-close cursor-pointer text-slate-500 hover:text-slate-800" onclick="closeEditModal()">
+                    <i class="fas fa-times text-xl"></i>
                 </div>
             </div>
 
             <!-- Body -->
-            <div class="px-6 py-4">
-                <form id="editFileForm">
-                    <input type="hidden" id="editFileId" name="file_id">
-                    <input type="hidden" name="action" value="update_file">
-                    
-                    <div class="space-y-4">
-                        <div>
-                            <label class="block text-sm font-medium text-slate-700 mb-1">Файлын нэр</label>
-                            <input type="text" id="editFileName" name="title" class="w-full border border-slate-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
+            <div class="flex-1 overflow-y-auto p-6 bg-white">
+                <div class="flex flex-col lg:flex-row gap-8">
+                    <!-- Left Column: Details -->
+                    <div class="flex-1 space-y-6">
+                        <form id="editFileForm">
+                            <input type="hidden" id="editFileId" name="file_id">
+                            <input type="hidden" name="action" value="update_file">
+                            
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-slate-700 mb-1">Файлын нэр</label>
+                                    <input type="text" id="editFileName" name="title" class="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 text-sm bg-gray-50">
+                                </div>
+                                
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-sm font-medium text-slate-700 mb-1">Үнэ</label>
+                                        <input type="text" id="editFilePrice" readonly class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-gray-100 text-gray-500 cursor-not-allowed">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-slate-700 mb-1">Төрөл</label>
+                                        <input type="text" id="editFileType" readonly class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-gray-100 text-gray-500 cursor-not-allowed uppercase">
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label class="block text-sm font-medium text-slate-700 mb-1">Тайлбар</label>
+                                    <div id="editFileDesc" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-gray-50 h-32 overflow-y-auto"></div>
+                                </div>
+                                
+                                <div class="bg-indigo-50 p-4 rounded-lg border border-indigo-100">
+                                    <h3 class="text-sm font-bold text-indigo-900 mb-3">Статус өөрчлөх</h3>
+                                    <div>
+                                        <label class="block text-sm font-medium text-slate-700 mb-1">Төлөв</label>
+                                        <select id="editFileStatus" name="status" class="w-full border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 text-sm bg-white" onchange="toggleRejectReason(this.value)">
+                                            <option value="approved">✅ Зөвшөөрөх (Approved)</option>
+                                            <option value="pending">⏳ Хүлээгдэж буй (Pending)</option>
+                                            <option value="rejected">❌ Татгалзах (Rejected)</option>
+                                        </select>
+                                    </div>
+
+                                    <div id="rejectReasonGroup" class="hidden mt-3">
+                                        <label class="block text-sm font-medium text-red-700 mb-1">Татгалзсан шалтгаан <span class="text-red-500">*</span></label>
+                                        <textarea id="editRejectReason" name="reject_reason" rows="3" class="w-full border border-red-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-red-500 text-sm bg-white" placeholder="Хэрэглэгчид харагдах шалтгааныг бичнэ үү..."></textarea>
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- Right Column: Previews -->
+                    <div class="w-full lg:w-1/3">
+                        <h3 class="text-sm font-bold text-slate-700 mb-3">Зургууд (Previews)</h3>
+                        <div id="previewContainer" class="grid grid-cols-2 gap-2 max-h-[400px] overflow-y-auto pr-1">
+                            <!-- JS will populate -->
+                            <div class="col-span-2 text-center py-8 text-gray-400 bg-gray-50 rounded-lg border border-dashed border-gray-200 text-sm">
+                                Уншиж байна...
+                            </div>
                         </div>
                         
-                        <div>
-                            <label class="block text-sm font-medium text-slate-700 mb-1">Төлөв</label>
-                            <select id="editFileStatus" name="status" class="w-full border border-slate-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm" onchange="toggleRejectReason(this.value)">
-                                <option value="approved">Зөвшөөрөх (Approved)</option>
-                                <option value="pending">Хүлээгдэж буй (Pending)</option>
-                                <option value="rejected">Татгалзах (Rejected)</option>
-                            </select>
-                        </div>
-
-                        <div id="rejectReasonGroup" class="hidden">
-                            <label class="block text-sm font-medium text-red-700 mb-1">Татгалзсан шалтгаан</label>
-                            <textarea id="editRejectReason" name="reject_reason" rows="3" class="w-full border border-red-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-red-500 text-sm" placeholder="Яагаад татгалзсан бэ?"></textarea>
+                        <div class="mt-4 pt-4 border-t border-slate-200">
+                            <h3 class="text-sm font-bold text-slate-700 mb-2">Үндсэн файл</h3>
+                            <a id="downloadLink" href="#" target="_blank" class="flex items-center justify-center w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition text-sm font-medium border border-slate-300">
+                                <i class="fas fa-download mr-2"></i> Файлыг татах / Харах
+                            </a>
                         </div>
                     </div>
-                </form>
+                </div>
             </div>
 
             <!-- Footer -->
-            <div class="flex justify-end gap-2 px-6 py-4 border-t bg-slate-50">
-                <button onclick="closeEditModal()" class="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 transition text-sm font-medium">Болих</button>
-                <button onclick="saveFileChanges()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition text-sm font-medium">Хадгалах</button>
+            <div class="flex justify-between items-center px-6 py-4 border-t bg-gray-50">
+                <button type="button" onclick="deleteFile(document.getElementById('editFileId').value)" class="text-red-600 hover:text-red-700 text-sm font-medium">
+                    <i class="fas fa-trash-alt mr-1"></i> Энэ файлыг устгах
+                </button>
+                <div class="flex gap-2">
+                    <button onclick="closeEditModal()" class="px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition text-sm font-medium">Болих</button>
+                    <button onclick="saveFileChanges()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition text-sm font-medium shadow-sm">Өөрчлөлтийг хадгалах</button>
+                </div>
             </div>
         </div>
     </div>
@@ -405,15 +513,59 @@ function getFileIcon($type) {
         const overlay = document.querySelector('.modal-overlay');
 
         function openEditModal(file) {
+            // Fill basic fields
             document.getElementById('editFileId').value = file.id;
             document.getElementById('editFileName').value = file.title;
+            document.getElementById('editFilePrice').value = file.price > 0 ? file.price + '₮' : 'Үнэгүй';
+            document.getElementById('editFileType').value = file.file_type;
+            document.getElementById('editFileDesc').innerHTML = file.description; // HTML content support
             document.getElementById('editFileStatus').value = file.status;
             document.getElementById('editRejectReason').value = file.reject_reason || '';
             
+            // File Download Link
+            const dlLink = document.getElementById('downloadLink');
+            if(file.file_url) {
+                dlLink.href = '../' + file.file_url;
+                dlLink.classList.remove('hidden');
+            } else {
+                dlLink.classList.add('hidden');
+            }
+
             toggleRejectReason(file.status);
+            
+            // Load Previews via AJAX
+            loadPreviews(file.id);
 
             modal.classList.remove('opacity-0', 'pointer-events-none');
             document.body.classList.add('modal-active');
+        }
+
+        function loadPreviews(fileId) {
+            const container = document.getElementById('previewContainer');
+            container.innerHTML = '<div class="col-span-2 text-center py-4"><i class="fas fa-spinner fa-spin text-indigo-500"></i></div>';
+            
+            const formData = new FormData();
+            formData.append('action', 'get_previews');
+            formData.append('file_id', fileId);
+
+            fetch('files.php', { method: 'POST', body: formData })
+            .then(res => res.json())
+            .then(data => {
+                container.innerHTML = '';
+                if(data.success && data.previews.length > 0) {
+                    data.previews.forEach(url => {
+                        const div = document.createElement('div');
+                        div.className = 'aspect-square rounded-lg overflow-hidden border border-slate-200 bg-gray-100 relative group cursor-pointer';
+                        div.innerHTML = `<img src="${url}" class="w-full h-full object-cover" onclick="window.open('${url}', '_blank')">`;
+                        container.appendChild(div);
+                    });
+                } else {
+                    container.innerHTML = '<div class="col-span-2 text-center py-8 text-gray-400 bg-gray-50 rounded-lg border border-dashed border-gray-200 text-xs">Зураггүй</div>';
+                }
+            })
+            .catch(() => {
+                container.innerHTML = '<div class="col-span-2 text-center text-red-500 text-xs">Алдаа гарлаа</div>';
+            });
         }
 
         function closeEditModal() {
@@ -453,7 +605,7 @@ function getFileIcon($type) {
         }
 
         function deleteFile(id) {
-            if(confirm('Та энэ файлыг устгахдаа итгэлтэй байна уу?')) {
+            if(confirm('АНХААР: Энэ файлыг сервер болон мэдээллийн сангаас БҮР МӨСӨН устгах гэж байна! Итгэлтэй байна уу?')) {
                 const formData = new FormData();
                 formData.append('action', 'delete_file');
                 formData.append('file_id', id);
@@ -465,6 +617,7 @@ function getFileIcon($type) {
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
+                        alert(data.message); // Амжилттай устгагдлаа
                         location.reload();
                     } else {
                         alert('Алдаа: ' + data.message);

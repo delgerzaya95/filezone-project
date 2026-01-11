@@ -1,7 +1,5 @@
 <?php
 session_start();
-
-// Database холболт
 require_once '../includes/db.php';
 
 // Админ эрх шалгах
@@ -10,93 +8,90 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
     exit;
 }
 
-$message = '';
-$error = '';
-
 // --------------------------------------------------------------------------
-// ACTION HANDLERS
+// AJAX HANDLERS
 // --------------------------------------------------------------------------
-
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    
-    // 1. ШИНЭ ЗАХИАЛГА ҮҮСГЭХ
-    if (isset($_POST['create_order'])) {
-        $service_id = intval($_POST['service_id']);
-        $buyer_id = intval($_POST['buyer_id']);
-        $custom_price = !empty($_POST['price']) ? floatval($_POST['price']) : null;
-        $status = $_POST['status'];
+    header('Content-Type: application/json');
 
-        if ($service_id && $buyer_id) {
-            try {
-                // Үйлчилгээний мэдээллийг татах (Seller ID болон Үнэ авах)
-                $stmt = $pdo->prepare("SELECT user_id as seller_id, price_min FROM services WHERE id = ?");
-                $stmt->execute([$service_id]);
-                $service = $stmt->fetch();
-
-                if ($service) {
-                    $seller_id = $service['seller_id'];
-                    $price = $custom_price ? $custom_price : $service['price_min']; // Хэрэв үнэ гараар оруулаагүй бол үндсэн үнийг авна
-
-                    // Өөрийнхөө үйлчилгээг өөрөө захиалахыг хориглох (optional)
-                    if ($buyer_id == $seller_id) {
-                        $error = "Хэрэглэгч өөрийн үйлчилгээг захиалах боломжгүй.";
-                    } else {
-                        $sql = "INSERT INTO service_orders (service_id, buyer_id, seller_id, price, status, ordered_at) 
-                                VALUES (?, ?, ?, ?, ?, NOW())";
-                        $stmt = $pdo->prepare($sql);
-                        $stmt->execute([$service_id, $buyer_id, $seller_id, $price, $status]);
-                        
-                        $message = "Захиалга амжилттай үүсгэгдлээ.";
-                    }
-                } else {
-                    $error = "Сонгосон үйлчилгээ олдсонгүй.";
-                }
-            } catch (PDOException $e) {
-                $error = "Захиалга үүсгэхэд алдаа гарлаа: " . $e->getMessage();
-            }
-        } else {
-            $error = "Үйлчилгээ болон Захиалагчийг сонгоно уу.";
-        }
-    }
-
-    // 2. ЗАХИАЛГА УСТГАХ
-    if (isset($_POST['delete_order'])) {
+    // 1. GET ORDER DETAILS (With Chat & Timeline)
+    if (isset($_POST['action']) && $_POST['action'] === 'get_order_details') {
         $id = intval($_POST['id']);
         try {
-            $stmt = $pdo->prepare("DELETE FROM service_orders WHERE id = ?");
+            // A. Order Info
+            $sql = "SELECT so.*, 
+                           s.title as service_title, s.cover_image,
+                           buyer.username as buyer_name, buyer.email as buyer_email, buyer.phone as buyer_phone,
+                           seller.username as seller_name, seller.email as seller_email, seller.phone as seller_phone
+                    FROM service_orders so
+                    LEFT JOIN services s ON so.service_id = s.id
+                    LEFT JOIN users buyer ON so.buyer_id = buyer.id
+                    LEFT JOIN users seller ON so.seller_id = seller.id
+                    WHERE so.id = ?";
+            $stmt = $pdo->prepare($sql);
             $stmt->execute([$id]);
-            $message = "Захиалга устгагдлаа.";
+            $order = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if ($order) {
+                // Formatting
+                $order['price_fmt'] = number_format($order['price']) . '₮';
+                $order['ordered_at_fmt'] = date('Y-m-d H:i', strtotime($order['ordered_at']));
+                $order['cover_image'] = !empty($order['cover_image']) ? '../' . $order['cover_image'] : '../assets/images/service-placeholder.jpg';
+
+                // B. Chat Messages (Communication History)
+                $msg_sql = "SELECT m.*, u.username, u.role
+                            FROM order_messages m
+                            LEFT JOIN users u ON m.sender_id = u.id
+                            WHERE m.order_id = ?
+                            ORDER BY m.created_at ASC";
+                $msg_stmt = $pdo->prepare($msg_sql);
+                $msg_stmt->execute([$id]);
+                $messages = $msg_stmt->fetchAll(PDO::FETCH_ASSOC);
+
+                // Format messages
+                foreach ($messages as &$msg) {
+                    $msg['created_at_fmt'] = date('m-d H:i', strtotime($msg['created_at']));
+                    $msg['file_url'] = !empty($msg['file_url']) ? '../' . $msg['file_url'] : null;
+                }
+                $order['messages'] = $messages;
+
+                echo json_encode(['success' => true, 'data' => $order]);
+            } else {
+                echo json_encode(['success' => false, 'message' => 'Захиалга олдсонгүй.']);
+            }
         } catch (PDOException $e) {
-            $error = "Устгахад алдаа гарлаа: " . $e->getMessage();
+            echo json_encode(['success' => false, 'message' => 'DB Error: ' . $e->getMessage()]);
         }
+        exit;
     }
 
-    // 3. ТӨЛӨВ ӨӨРЧЛӨХ (Update Status)
-    if (isset($_POST['update_status'])) {
-        $id = intval($_POST['order_id']);
-        $new_status = $_POST['status'];
+    // 2. UPDATE ORDER STATUS (Admin Intervention)
+    if (isset($_POST['action']) && $_POST['action'] === 'update_order_status') {
+        $id = intval($_POST['id']);
+        $status = $_POST['status']; // active, completed, cancelled
+        
+        // Маргаан шийдвэрлэх логик (Энд зөвхөн статус өөрчилж байна. Санхүүгийн гүйлгээг transactions дээр тусад нь бүртгэх ёстой)
+        // Жишээ нь: Cancelled = Мөнгө буцаалт, Completed = Мөнгө шилжүүлэг
         
         try {
-            // Төлөвөөс хамаарч цагийг шинэчлэх
-            $time_column = "";
-            if ($new_status == 'delivered') {
-                $time_column = ", delivered_at = NOW()";
-            } elseif ($new_status == 'completed') {
-                $time_column = ", completed_at = NOW()";
-            }
+            $time_col = "";
+            if ($status === 'completed') $time_col = ", completed_at = NOW()";
+            if ($status === 'delivered') $time_col = ", delivered_at = NOW()";
 
-            $sql = "UPDATE service_orders SET status = ? $time_column WHERE id = ?";
+            $sql = "UPDATE service_orders SET status = ? $time_col WHERE id = ?";
             $stmt = $pdo->prepare($sql);
-            $stmt->execute([$new_status, $id]);
-            $message = "Захиалгын төлөв шинэчлэгдлээ.";
+            $stmt->execute([$status, $id]);
+
+            echo json_encode(['success' => true, 'message' => 'Захиалгын төлөв шинэчлэгдлээ.']);
         } catch (PDOException $e) {
-            $error = "Төлөв өөрчлөхөд алдаа гарлаа: " . $e->getMessage();
+            echo json_encode(['success' => false, 'message' => 'Алдаа: ' . $e->getMessage()]);
         }
+        exit;
     }
 }
 
 // --------------------------------------------------------------------------
-// DATA FETCHING
+// PAGE DATA FETCHING
 // --------------------------------------------------------------------------
 
 $search = $_GET['search'] ?? '';
@@ -109,7 +104,6 @@ $offset = ($page - 1) * $limit;
 $where_clauses = ["1=1"];
 $params = [];
 
-// Search Filter
 if (!empty($search)) {
     $where_clauses[] = "(so.id LIKE ? OR s.title LIKE ? OR buyer.username LIKE ? OR seller.username LIKE ?)";
     $params[] = "%$search%";
@@ -118,7 +112,6 @@ if (!empty($search)) {
     $params[] = "%$search%";
 }
 
-// Status Filter
 if (!empty($status_filter)) {
     $where_clauses[] = "so.status = ?";
     $params[] = $status_filter;
@@ -126,7 +119,6 @@ if (!empty($status_filter)) {
 
 $where_sql = implode(' AND ', $where_clauses);
 
-// Count Total
 $count_sql = "SELECT COUNT(*) 
               FROM service_orders so 
               LEFT JOIN services s ON so.service_id = s.id 
@@ -138,10 +130,9 @@ $stmt->execute($params);
 $total_rows = $stmt->fetchColumn();
 $total_pages = ceil($total_rows / $limit);
 
-// Fetch Orders
 $sql = "SELECT so.*, 
                s.title as service_title, s.cover_image,
-               buyer.username as buyer_name, buyer.avatar_url as buyer_avatar,
+               buyer.username as buyer_name, 
                seller.username as seller_name 
         FROM service_orders so 
         LEFT JOIN services s ON so.service_id = s.id 
@@ -154,19 +145,12 @@ $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $orders = $stmt->fetchAll();
 
-// Fetch Services & Users for Modal (Dropdowns)
-$services_list = $pdo->query("SELECT id, title, price_min, user_id FROM services WHERE status = 'active' ORDER BY created_at DESC")->fetchAll();
-$users_list = $pdo->query("SELECT id, username, email FROM users ORDER BY username ASC")->fetchAll();
-
-// Statistics
+// Stats
 $stats = [
-    'total' => $pdo->query("SELECT COUNT(*) FROM service_orders")->fetchColumn(),
     'pending' => $pdo->query("SELECT COUNT(*) FROM service_orders WHERE status = 'pending'")->fetchColumn(),
     'active' => $pdo->query("SELECT COUNT(*) FROM service_orders WHERE status = 'active'")->fetchColumn(),
-    'completed' => $pdo->query("SELECT COUNT(*) FROM service_orders WHERE status = 'completed'")->fetchColumn(),
-    'revenue' => $pdo->query("SELECT SUM(price) FROM service_orders WHERE status = 'completed'")->fetchColumn()
+    'dispute' => 0 // Future implementation
 ];
-
 ?>
 <!DOCTYPE html>
 <html lang="mn">
@@ -177,8 +161,15 @@ $stats = [
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link href="css/style.css" rel="stylesheet">
     <script src="js/tailwind-config.js"></script>
+    <style>
+        .modal { transition: opacity 0.25s ease; }
+        body.modal-active { overflow-x: hidden; overflow-y: visible !important; }
+        .chat-bubble { max-width: 80%; padding: 10px 14px; border-radius: 12px; position: relative; font-size: 0.9rem; }
+        .chat-left { background: #f3f4f6; color: #1f2937; border-bottom-left-radius: 2px; }
+        .chat-right { background: #e0e7ff; color: #3730a3; border-bottom-right-radius: 2px; margin-left: auto; }
+        .chat-meta { font-size: 0.7rem; margin-top: 4px; opacity: 0.7; }
+    </style>
 </head>
 <body class="font-sans text-slate-800 antialiased bg-slate-50">
 
@@ -197,126 +188,79 @@ $stats = [
                     <h1 class="text-xl font-bold text-slate-800">Захиалгын удирдлага</h1>
                 </div>
                 <div class="flex items-center gap-3">
-                    <span class="text-sm font-medium text-slate-700">Админ</span>
+                    <?php if($stats['pending'] > 0): ?>
+                    <span class="text-xs font-medium text-yellow-700 bg-yellow-100 px-3 py-1 rounded-full border border-yellow-200 animate-pulse">
+                        Хүлээгдэж буй: <?php echo $stats['pending']; ?>
+                    </span>
+                    <?php endif; ?>
                 </div>
             </header>
 
             <!-- MAIN BODY -->
             <main class="flex-1 overflow-x-hidden overflow-y-auto p-6">
                 
-                <!-- Messages -->
-                <?php if ($message): ?>
-                    <div class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative mb-4" role="alert">
-                        <span class="block sm:inline"><?php echo $message; ?></span>
-                    </div>
-                <?php endif; ?>
+                <!-- Filters -->
+                <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <form method="GET" class="flex flex-col md:flex-row gap-4 flex-1">
+                        <div class="relative flex-1 max-w-md">
+                            <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 text-sm"></i>
+                            <input type="text" name="search" value="<?php echo htmlspecialchars($search); ?>" placeholder="Захиалгын ID, Үйлчилгээ, Хэрэглэгч..." class="pl-10 pr-4 py-2 w-full border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        </div>
+                        
+                        <select name="status" class="border border-slate-300 rounded-lg text-sm px-3 py-2 bg-white text-slate-600">
+                            <option value="">Бүх төлөв</option>
+                            <option value="pending" <?php echo $status_filter == 'pending' ? 'selected' : ''; ?>>Pending (Хүлээгдэж буй)</option>
+                            <option value="active" <?php echo $status_filter == 'active' ? 'selected' : ''; ?>>Active (Явагдаж буй)</option>
+                            <option value="delivered" <?php echo $status_filter == 'delivered' ? 'selected' : ''; ?>>Delivered (Хүлээлгэж өгсөн)</option>
+                            <option value="completed" <?php echo $status_filter == 'completed' ? 'selected' : ''; ?>>Completed (Дууссан)</option>
+                            <option value="cancelled" <?php echo $status_filter == 'cancelled' ? 'selected' : ''; ?>>Cancelled (Цуцлагдсан)</option>
+                        </select>
 
-                <?php if ($error): ?>
-                    <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">
-                        <span class="block sm:inline"><?php echo $error; ?></span>
-                    </div>
-                <?php endif; ?>
-
-                <!-- Stats Overview -->
-                <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
-                    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 flex items-center justify-between">
-                        <div>
-                            <p class="text-sm text-slate-500 font-medium">Нийт захиалга</p>
-                            <p class="text-2xl font-bold text-slate-800"><?php echo number_format($stats['total']); ?></p>
-                        </div>
-                        <div class="bg-blue-50 text-blue-600 p-3 rounded-full"><i class="fas fa-shopping-cart text-xl"></i></div>
-                    </div>
-                    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 flex items-center justify-between">
-                        <div>
-                            <p class="text-sm text-slate-500 font-medium">Идэвхтэй (Active)</p>
-                            <p class="text-2xl font-bold text-slate-800"><?php echo number_format($stats['active']); ?></p>
-                        </div>
-                        <div class="bg-indigo-50 text-indigo-600 p-3 rounded-full"><i class="fas fa-spinner text-xl"></i></div>
-                    </div>
-                    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 flex items-center justify-between">
-                        <div>
-                            <p class="text-sm text-slate-500 font-medium">Амжилттай</p>
-                            <p class="text-2xl font-bold text-slate-800"><?php echo number_format($stats['completed']); ?></p>
-                        </div>
-                        <div class="bg-green-50 text-green-600 p-3 rounded-full"><i class="fas fa-check-circle text-xl"></i></div>
-                    </div>
-                    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 flex items-center justify-between">
-                        <div>
-                            <p class="text-sm text-slate-500 font-medium">Нийт орлого (Дууссан)</p>
-                            <p class="text-2xl font-bold text-slate-800"><?php echo number_format($stats['revenue'] ?? 0); ?>₮</p>
-                        </div>
-                        <div class="bg-yellow-50 text-yellow-600 p-3 rounded-full"><i class="fas fa-coins text-xl"></i></div>
-                    </div>
+                        <button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 transition">Шүүх</button>
+                    </form>
+                    
+                    <a href="service_orders.php" class="p-2 text-slate-500 hover:text-slate-700 border border-slate-300 rounded-lg bg-white" title="Шинэчлэх">
+                        <i class="fas fa-sync-alt"></i>
+                    </a>
                 </div>
 
-                <!-- Filters & Table -->
-                <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
-                    
-                    <div class="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
-                        <div class="flex flex-col md:flex-row gap-4 w-full md:w-auto">
-                            <form method="GET" class="flex gap-2 w-full">
-                                <div class="relative flex-1 md:w-64">
-                                    <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 text-sm"></i>
-                                    <input type="text" name="search" value="<?php echo htmlspecialchars($search); ?>" placeholder="ID, Үйлчилгээ, Хэрэглэгч..." class="pl-10 pr-4 py-2 w-full border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
-                                </div>
-                                <select name="status" class="border border-slate-300 rounded-lg text-sm px-3 py-2 bg-white text-slate-700 focus:ring-2 focus:ring-indigo-500">
-                                    <option value="">Бүх төлөв</option>
-                                    <option value="pending" <?php echo $status_filter == 'pending' ? 'selected' : ''; ?>>Pending</option>
-                                    <option value="active" <?php echo $status_filter == 'active' ? 'selected' : ''; ?>>Active</option>
-                                    <option value="delivered" <?php echo $status_filter == 'delivered' ? 'selected' : ''; ?>>Delivered</option>
-                                    <option value="completed" <?php echo $status_filter == 'completed' ? 'selected' : ''; ?>>Completed</option>
-                                    <option value="cancelled" <?php echo $status_filter == 'cancelled' ? 'selected' : ''; ?>>Cancelled</option>
-                                </select>
-                                <button type="submit" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-indigo-700 transition">Шүүх</button>
-                            </form>
-                        </div>
-
-                        <!-- Create Order Button -->
-                        <button onclick="openCreateModal()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 shadow-sm transition">
-                            <i class="fas fa-plus"></i> Захиалга үүсгэх
-                        </button>
-                    </div>
-
-                    <!-- Orders Table -->
+                <!-- Orders Table -->
+                <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                     <div class="overflow-x-auto">
                         <table class="w-full text-left border-collapse">
                             <thead>
                                 <tr class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
                                     <th class="px-6 py-4 font-semibold">ID</th>
                                     <th class="px-6 py-4 font-semibold">Үйлчилгээ</th>
-                                    <th class="px-6 py-4 font-semibold">Захиалагч (Buyer)</th>
-                                    <th class="px-6 py-4 font-semibold">Гүйцэтгэгч (Seller)</th>
+                                    <th class="px-6 py-4 font-semibold">Захиалагч / Гүйцэтгэгч</th>
                                     <th class="px-6 py-4 font-semibold">Үнэ</th>
                                     <th class="px-6 py-4 font-semibold">Төлөв</th>
-                                    <th class="px-6 py-4 font-semibold text-right">Огноо</th>
                                     <th class="px-6 py-4 font-semibold text-right">Үйлдэл</th>
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-slate-100">
                                 <?php if (count($orders) > 0): ?>
-                                    <?php foreach ($orders as $order): ?>
+                                    <?php foreach ($orders as $order): 
+                                        $cover = !empty($order['cover_image']) && file_exists('../' . $order['cover_image']) ? '../' . $order['cover_image'] : '../assets/images/service-placeholder.jpg';
+                                    ?>
                                     <tr class="hover:bg-slate-50 transition-colors">
                                         <td class="px-6 py-4 text-sm font-mono text-slate-500">#<?php echo $order['id']; ?></td>
-                                        <td class="px-6 py-4">
-                                            <div class="flex items-center gap-3">
-                                                <div class="w-10 h-10 rounded bg-slate-100 flex-shrink-0 overflow-hidden border border-slate-200">
-                                                    <?php 
-                                                        $cover = !empty($order['cover_image']) && file_exists('../' . $order['cover_image']) 
-                                                            ? '../' . $order['cover_image'] 
-                                                            : '../assets/images/service-placeholder.jpg';
-                                                    ?>
-                                                    <img src="<?php echo $cover; ?>" class="w-full h-full object-cover">
+                                        <td class="px-6 py-4 w-1/3">
+                                            <div class="flex items-start gap-3">
+                                                <img src="<?php echo $cover; ?>" class="w-10 h-10 rounded-lg object-cover border border-slate-200 bg-gray-100 shrink-0">
+                                                <div>
+                                                    <p class="text-sm font-bold text-slate-800 line-clamp-1" title="<?php echo htmlspecialchars($order['service_title']); ?>">
+                                                        <?php echo htmlspecialchars($order['service_title']); ?>
+                                                    </p>
+                                                    <p class="text-xs text-slate-500 mt-0.5"><?php echo date('Y-m-d H:i', strtotime($order['ordered_at'])); ?></p>
                                                 </div>
-                                                <span class="text-sm font-medium text-slate-800 line-clamp-1 max-w-[150px]" title="<?php echo htmlspecialchars($order['service_title']); ?>">
-                                                    <?php echo htmlspecialchars($order['service_title']); ?>
-                                                </span>
                                             </div>
                                         </td>
-                                        <td class="px-6 py-4 text-sm text-slate-600">
-                                            <?php echo htmlspecialchars($order['buyer_name']); ?>
-                                        </td>
-                                        <td class="px-6 py-4 text-sm text-slate-600">
-                                            <?php echo htmlspecialchars($order['seller_name']); ?>
+                                        <td class="px-6 py-4">
+                                            <div class="text-xs text-slate-600">
+                                                <div class="flex items-center gap-1 mb-1"><span class="w-12 text-slate-400">Buyer:</span> <span class="font-medium"><?php echo htmlspecialchars($order['buyer_name']); ?></span></div>
+                                                <div class="flex items-center gap-1"><span class="w-12 text-slate-400">Seller:</span> <span class="font-medium text-indigo-600"><?php echo htmlspecialchars($order['seller_name']); ?></span></div>
+                                            </div>
                                         </td>
                                         <td class="px-6 py-4 text-sm font-bold text-slate-700">
                                             <?php echo number_format($order['price']); ?>₮
@@ -324,52 +268,37 @@ $stats = [
                                         <td class="px-6 py-4">
                                             <?php 
                                                 $status_classes = [
-                                                    'pending' => 'bg-yellow-100 text-yellow-800',
-                                                    'active' => 'bg-blue-100 text-blue-800',
-                                                    'delivered' => 'bg-purple-100 text-purple-800',
-                                                    'completed' => 'bg-green-100 text-green-800',
-                                                    'cancelled' => 'bg-red-100 text-red-800'
+                                                    'pending' => 'bg-yellow-100 text-yellow-800 border-yellow-200',
+                                                    'active' => 'bg-blue-100 text-blue-800 border-blue-200',
+                                                    'delivered' => 'bg-purple-100 text-purple-800 border-purple-200',
+                                                    'completed' => 'bg-green-100 text-green-800 border-green-200',
+                                                    'cancelled' => 'bg-red-100 text-red-800 border-red-200'
                                                 ];
                                                 $s_class = $status_classes[$order['status']] ?? 'bg-gray-100 text-gray-800';
                                             ?>
-                                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium <?php echo $s_class; ?>">
+                                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border <?php echo $s_class; ?>">
                                                 <?php echo ucfirst($order['status']); ?>
                                             </span>
                                         </td>
-                                        <td class="px-6 py-4 text-right text-sm text-slate-500">
-                                            <?php echo date('Y-m-d', strtotime($order['ordered_at'])); ?>
-                                        </td>
                                         <td class="px-6 py-4 text-right">
-                                            <div class="flex items-center justify-end gap-2">
-                                                <button onclick='openEditStatusModal(<?php echo json_encode($order); ?>)' class="p-1.5 text-slate-400 hover:text-indigo-600 rounded hover:bg-indigo-50 transition" title="Төлөв өөрчлөх">
-                                                    <i class="fas fa-edit"></i>
-                                                </button>
-                                                <form method="POST" class="inline" onsubmit="return confirm('Энэ захиалгыг устгах уу?');">
-                                                    <input type="hidden" name="delete_order" value="1">
-                                                    <input type="hidden" name="id" value="<?php echo $order['id']; ?>">
-                                                    <button type="submit" class="p-1.5 text-slate-400 hover:text-red-600 rounded hover:bg-red-50 transition" title="Устгах">
-                                                        <i class="fas fa-trash-alt"></i>
-                                                    </button>
-                                                </form>
-                                            </div>
+                                            <button onclick="openOrderModal(<?php echo $order['id']; ?>)" class="text-indigo-600 hover:text-indigo-800 text-sm font-medium bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded transition">
+                                                Хянах
+                                            </button>
                                         </td>
                                     </tr>
                                     <?php endforeach; ?>
                                 <?php else: ?>
-                                    <tr>
-                                        <td colspan="8" class="px-6 py-8 text-center text-slate-500">Захиалга олдсонгүй.</td>
-                                    </tr>
+                                    <tr><td colspan="6" class="px-6 py-8 text-center text-slate-500">Захиалга олдсонгүй.</td></tr>
                                 <?php endif; ?>
                             </tbody>
                         </table>
                     </div>
 
                     <!-- Pagination -->
-                    <?php if($total_pages > 1): ?>
-                    <div class="mt-4 flex justify-center gap-2">
+                    <?php if ($total_pages > 1): ?>
+                    <div class="mt-4 flex justify-end gap-2 px-6 pb-4">
                         <?php for($i = 1; $i <= $total_pages; $i++): ?>
-                            <a href="?page=<?php echo $i; ?>&search=<?php echo urlencode($search); ?>&status=<?php echo urlencode($status_filter); ?>" 
-                               class="px-3 py-1 border <?php echo $i == $page ? 'bg-indigo-600 text-white border-indigo-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'; ?> rounded text-sm">
+                            <a href="?page=<?php echo $i; ?>&search=<?php echo urlencode($search); ?>&status=<?php echo $status_filter; ?>" class="px-3 py-1 text-sm border rounded <?php echo $i == $page ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600'; ?>">
                                 <?php echo $i; ?>
                             </a>
                         <?php endfor; ?>
@@ -381,131 +310,204 @@ $stats = [
         </div>
     </div>
 
-    <!-- Create Order Modal -->
-    <div id="createOrderModal" class="fixed inset-0 z-50 hidden overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
-        <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-            <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" onclick="closeModal('createOrderModal')"></div>
-            <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
-            <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
-                <form method="POST" action="">
-                    <input type="hidden" name="create_order" value="1">
-                    
-                    <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-                        <h3 class="text-lg font-medium text-gray-900 mb-4">Шинэ захиалга үүсгэх</h3>
-                        <div class="space-y-4">
-                            <!-- Service Selection -->
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700">Үйлчилгээ сонгох</label>
-                                <select name="service_id" id="service_select" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" required onchange="updatePricePlaceholder(this)">
-                                    <option value="">Сонгох...</option>
-                                    <?php foreach ($services_list as $srv): ?>
-                                        <option value="<?php echo $srv['id']; ?>" data-price="<?php echo $srv['price_min']; ?>">
-                                            <?php echo htmlspecialchars($srv['title']) . ' (' . number_format($srv['price_min']) . '₮)'; ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-                            
-                            <!-- Buyer Selection -->
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700">Захиалагч (Buyer)</label>
-                                <select name="buyer_id" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" required>
-                                    <option value="">Сонгох...</option>
-                                    <?php foreach ($users_list as $usr): ?>
-                                        <option value="<?php echo $usr['id']; ?>"><?php echo htmlspecialchars($usr['username']) . ' (' . htmlspecialchars($usr['email']) . ')'; ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
+    <!-- ORDER DETAILS & CHAT MODAL -->
+    <div id="orderModal" class="modal opacity-0 pointer-events-none fixed w-full h-full top-0 left-0 flex items-center justify-center z-50">
+        <div class="modal-overlay absolute w-full h-full bg-gray-900 opacity-50"></div>
+        
+        <div class="modal-container bg-white w-11/12 md:max-w-5xl mx-auto rounded-xl shadow-xl z-50 overflow-hidden flex flex-col h-[85vh]">
+            <!-- Header -->
+            <div class="flex justify-between items-center px-6 py-4 border-b bg-gray-50">
+                <div>
+                    <p class="text-lg font-bold text-slate-800">Захиалга #<span id="modalOrderId"></span></p>
+                    <p class="text-xs text-slate-500">Админ хяналтын цонх</p>
+                </div>
+                <div class="modal-close cursor-pointer text-slate-500 hover:text-slate-800" onclick="closeModal()">
+                    <i class="fas fa-times text-xl"></i>
+                </div>
+            </div>
 
-                            <!-- Price Override -->
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700">Үнэ (Хоосон орхивол үндсэн үнээр)</label>
-                                <input type="number" name="price" id="order_price" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" placeholder="Үндсэн үнэ: 0₮">
-                            </div>
+            <!-- Body -->
+            <div class="flex-1 overflow-hidden flex flex-col md:flex-row">
+                
+                <!-- Left: Order Info & Actions -->
+                <div class="w-full md:w-1/3 bg-white border-r border-slate-200 overflow-y-auto p-6">
+                    <div id="orderInfoContent" class="space-y-6">
+                        <!-- Content loaded via AJAX -->
+                        <div class="flex justify-center py-10"><i class="fas fa-spinner fa-spin text-2xl text-indigo-500"></i></div>
+                    </div>
 
-                            <!-- Initial Status -->
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700">Эхлэх Төлөв</label>
-                                <select name="status" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
-                                    <option value="pending">Pending</option>
-                                    <option value="active" selected>Active (Эхлүүлэх)</option>
-                                    <option value="completed">Completed (Дууссан)</option>
-                                </select>
-                            </div>
+                    <!-- Admin Actions -->
+                    <div class="mt-8 pt-6 border-t border-slate-100">
+                        <h4 class="text-xs font-bold text-slate-400 uppercase mb-3">Маргаан шийдвэрлэх / Удирдах</h4>
+                        <div class="space-y-2">
+                            <button onclick="updateOrderStatus('completed')" class="w-full text-left px-4 py-3 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition flex items-center justify-between group">
+                                <span class="text-sm font-medium">Захиалгыг дуусгах</span>
+                                <i class="fas fa-check-circle opacity-0 group-hover:opacity-100"></i>
+                            </button>
+                            <p class="text-[10px] text-slate-400 mb-2 px-1">Мөнгийг гүйцэтгэгчид шилжүүлнэ.</p>
+
+                            <button onclick="updateOrderStatus('cancelled')" class="w-full text-left px-4 py-3 bg-red-50 text-red-700 rounded-lg hover:bg-red-100 transition flex items-center justify-between group">
+                                <span class="text-sm font-medium">Захиалгыг цуцлах</span>
+                                <i class="fas fa-ban opacity-0 group-hover:opacity-100"></i>
+                            </button>
+                            <p class="text-[10px] text-slate-400 px-1">Мөнгийг захиалагчид буцаана.</p>
                         </div>
                     </div>
-                    <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
-                        <button type="submit" class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-green-600 text-base font-medium text-white hover:bg-green-700 focus:outline-none sm:ml-3 sm:w-auto sm:text-sm">Үүсгэх</button>
-                        <button type="button" onclick="closeModal('createOrderModal')" class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">Болих</button>
+                </div>
+
+                <!-- Right: Chat History -->
+                <div class="w-full md:w-2/3 bg-slate-50 flex flex-col">
+                    <div class="px-6 py-3 border-b border-slate-200 bg-white flex justify-between items-center">
+                        <h3 class="font-bold text-slate-700 flex items-center gap-2"><i class="far fa-comments"></i> Харилцан яриа</h3>
+                        <span class="text-xs text-slate-400 bg-slate-100 px-2 py-1 rounded">Зөвхөн унших эрхтэй</span>
                     </div>
-                </form>
+                    
+                    <div id="chatContainer" class="flex-1 overflow-y-auto p-6 space-y-4">
+                        <!-- Chat messages loaded via AJAX -->
+                        <div class="text-center text-slate-400 text-sm mt-10">Түүх байхгүй байна.</div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 
-    <!-- Update Status Modal -->
-    <div id="statusModal" class="fixed inset-0 z-50 hidden overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
-        <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-            <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" onclick="closeModal('statusModal')"></div>
-            <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
-            <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-sm sm:w-full">
-                <form method="POST" action="">
-                    <input type="hidden" name="update_status" value="1">
-                    <input type="hidden" name="order_id" id="edit_order_id">
-                    
-                    <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-                        <h3 class="text-lg font-medium text-gray-900 mb-4">Төлөв өөрчлөх</h3>
-                        <p class="text-sm text-gray-500 mb-4">Захиалга #<span id="display_order_id"></span></p>
-                        
-                        <div class="space-y-4">
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700">Төлөв</label>
-                                <select name="status" id="edit_order_status" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
-                                    <option value="pending">Pending</option>
-                                    <option value="active">Active</option>
-                                    <option value="delivered">Delivered</option>
-                                    <option value="completed">Completed</option>
-                                    <option value="cancelled">Cancelled</option>
-                                </select>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
-                        <button type="submit" class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-indigo-600 text-base font-medium text-white hover:bg-indigo-700 focus:outline-none sm:ml-3 sm:w-auto sm:text-sm">Хадгалах</button>
-                        <button type="button" onclick="closeModal('statusModal')" class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">Болих</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <script src="js/script.js"></script>
     <script>
-        function openCreateModal() {
-            document.getElementById('createOrderModal').classList.remove('hidden');
+        const modal = document.getElementById('orderModal');
+        let currentOrderId = 0;
+
+        function openOrderModal(id) {
+            currentOrderId = id;
+            document.getElementById('modalOrderId').innerText = id;
+            modal.classList.remove('opacity-0', 'pointer-events-none');
+            document.body.classList.add('modal-active');
+            
+            loadOrderDetails(id);
         }
 
-        function closeModal(modalId) {
-            document.getElementById(modalId).classList.add('hidden');
+        function closeModal() {
+            modal.classList.add('opacity-0', 'pointer-events-none');
+            document.body.classList.remove('modal-active');
         }
 
-        function updatePricePlaceholder(select) {
-            const selectedOption = select.options[select.selectedIndex];
-            const price = selectedOption.getAttribute('data-price');
-            const input = document.getElementById('order_price');
-            if (price) {
-                input.placeholder = "Үндсэн үнэ: " + new Intl.NumberFormat().format(price) + "₮";
-            } else {
-                input.placeholder = "Үндсэн үнэ: 0₮";
-            }
+        function loadOrderDetails(id) {
+            const formData = new FormData();
+            formData.append('action', 'get_order_details');
+            formData.append('id', id);
+
+            fetch('service_orders.php', { method: 'POST', body: formData })
+            .then(res => res.json())
+            .then(res => {
+                if(res.success) {
+                    const d = res.data;
+                    
+                    // 1. Render Order Info
+                    let statusColor = d.status === 'active' ? 'text-blue-600 bg-blue-50' : (d.status === 'completed' ? 'text-green-600 bg-green-50' : 'text-slate-600 bg-slate-100');
+                    
+                    document.getElementById('orderInfoContent').innerHTML = `
+                        <div>
+                            <span class="inline-block px-3 py-1 rounded-full text-xs font-bold uppercase ${statusColor} mb-2">${d.status}</span>
+                            <h2 class="text-lg font-bold text-slate-800 leading-tight mb-1">${d.service_title}</h2>
+                            <p class="text-sm text-slate-500">${d.ordered_at_fmt}</p>
+                        </div>
+                        
+                        <div class="p-4 bg-slate-50 rounded-xl border border-slate-100">
+                            <div class="flex justify-between items-center mb-2">
+                                <span class="text-sm text-slate-500">Үнэ</span>
+                                <span class="text-lg font-bold text-indigo-600">${d.price_fmt}</span>
+                            </div>
+                            <div class="h-px bg-slate-200 my-2"></div>
+                            <div class="grid grid-cols-2 gap-4 text-sm">
+                                <div>
+                                    <p class="text-xs text-slate-400 uppercase">Захиалагч</p>
+                                    <p class="font-medium text-slate-700">${d.buyer_name}</p>
+                                    <p class="text-xs text-slate-500">${d.buyer_email}</p>
+                                    <p class="text-xs text-slate-500">${d.buyer_phone || '-'}</p>
+                                </div>
+                                <div>
+                                    <p class="text-xs text-slate-400 uppercase">Гүйцэтгэгч</p>
+                                    <p class="font-medium text-slate-700">${d.seller_name}</p>
+                                    <p class="text-xs text-slate-500">${d.seller_email}</p>
+                                    <p class="text-xs text-slate-500">${d.seller_phone || '-'}</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        ${d.requirements_submitted ? `
+                        <div>
+                            <p class="text-xs font-bold text-slate-400 uppercase mb-2">Шаардлага / Тайлбар</p>
+                            <div class="text-sm text-slate-600 bg-white border border-slate-200 p-3 rounded-lg max-h-32 overflow-y-auto">
+                                ${d.requirements_submitted}
+                            </div>
+                        </div>` : ''}
+                    `;
+
+                    // 2. Render Chat
+                    const chatContainer = document.getElementById('chatContainer');
+                    if (d.messages && d.messages.length > 0) {
+                        chatContainer.innerHTML = d.messages.map(msg => {
+                            const isBuyer = msg.sender_id == d.buyer_id;
+                            const bubbleClass = isBuyer ? 'chat-left' : 'chat-right';
+                            const roleLabel = isBuyer ? 'Захиалагч' : 'Гүйцэтгэгч';
+                            
+                            let fileHtml = '';
+                            if (msg.file_url) {
+                                const ext = msg.file_url.split('.').pop().toLowerCase();
+                                if(['jpg','jpeg','png'].includes(ext)) {
+                                    fileHtml = `<a href="${msg.file_url}" target="_blank"><img src="${msg.file_url}" class="mt-2 rounded-lg max-w-[200px] max-h-32 object-cover border border-slate-300"></a>`;
+                                } else {
+                                    fileHtml = `<a href="${msg.file_url}" target="_blank" class="mt-2 flex items-center gap-2 text-indigo-600 bg-white p-2 rounded border text-xs"><i class="fas fa-paperclip"></i> Файл татах</a>`;
+                                }
+                            }
+
+                            return `
+                                <div class="w-full flex flex-col ${isBuyer ? 'items-start' : 'items-end'}">
+                                    <div class="chat-bubble ${bubbleClass}">
+                                        <p>${msg.message}</p>
+                                        ${fileHtml}
+                                    </div>
+                                    <div class="chat-meta text-slate-400">
+                                        <span class="font-bold">${msg.username}</span> (${roleLabel}) • ${msg.created_at_fmt}
+                                    </div>
+                                </div>
+                            `;
+                        }).join('');
+                    } else {
+                        chatContainer.innerHTML = '<div class="flex h-full items-center justify-center text-slate-400 flex-col"><i class="far fa-comments text-4xl mb-2 opacity-50"></i><p>Харилцан яриа эхлээгүй байна.</p></div>';
+                    }
+                } else {
+                    alert(res.message);
+                }
+            })
+            .catch(() => alert('Сүлжээний алдаа.'));
         }
 
-        function openEditStatusModal(order) {
-            document.getElementById('edit_order_id').value = order.id;
-            document.getElementById('display_order_id').textContent = order.id;
-            document.getElementById('edit_order_status').value = order.status;
-            document.getElementById('statusModal').classList.remove('hidden');
+        function updateOrderStatus(status) {
+            let msg = status === 'completed' ? 
+                'Захиалгыг ДУУСГАХ уу? Мөнгө гүйцэтгэгчид шилжинэ.' : 
+                'Захиалгыг ЦУЦЛАХ уу? Мөнгө захиалагчид буцна.';
+            
+            if(!confirm(msg)) return;
+
+            const formData = new FormData();
+            formData.append('action', 'update_order_status');
+            formData.append('id', currentOrderId);
+            formData.append('status', status);
+
+            fetch('service_orders.php', { method: 'POST', body: formData })
+            .then(res => res.json())
+            .then(res => {
+                if(res.success) {
+                    alert(res.message);
+                    location.reload();
+                } else {
+                    alert('Алдаа: ' + res.message);
+                }
+            })
+            .catch(() => alert('Сүлжээний алдаа.'));
         }
+
+        // Close modal on overlay click
+        document.querySelector('.modal-overlay').addEventListener('click', closeModal);
     </script>
 </body>
 </html>

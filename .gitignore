@@ -1,8 +1,7 @@
 vendor/
-includes/google_config.php
-includes/google_config.php
 api/qpay_config.php
 api/brevo_email.php
 google-login.php
 includes/db.php
 kids/db_kids.php
+api/

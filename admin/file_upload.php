@@ -1,7 +1,6 @@
 <?php 
 session_start();
 require_once '../includes/db.php';
-require_once '../kids/db_kids.php'; // KIDS Database connection
 
 // Админ эрх шалгах
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
@@ -9,13 +8,13 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
     exit;
 }
 
-$user_id = $_SESSION['user_id']; // Current admin ID
+$user_id = $_SESSION['user_id'];
 $message = '';
 $error = '';
 
 // GET параметрээр амжилттай болсон мессежийг харуулах
 if (isset($_GET['success']) && $_GET['success'] == 1) {
-    $message = "Хүүхдийн материал амжилттай нийтлэгдлээ!";
+    $message = "Файл амжилттай нийтлэгдлээ!";
 }
 
 // --- HELPER FUNCTIONS ---
@@ -37,37 +36,29 @@ function reArrayFiles(&$file_post) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
     $title = trim($_POST['title']);
-    
-    // Ангилал (Зөвхөн сонголт)
     $category_id = intval($_POST['category_id']);
+    $subcategory_id = intval($_POST['subcategory_id']);
+    $child_category_id = isset($_POST['child_category_id']) && !empty($_POST['child_category_id']) ? intval($_POST['child_category_id']) : null;
     
-    // Насны ангилал
-    $age_group = isset($_POST['target_age']) ? trim($_POST['target_age']) : '';
-
-    // Үнэ (Default 0)
-    $price = 0.00;
+    // Үнийг цэвэрлэх (comma-г арилгах)
+    $priceRaw = str_replace(',', '', $_POST['price']);
+    $price = floatval($priceRaw);
     
-    // Description (TinyMCE-ээс ирэх тул HTML tags зөвшөөрнө)
-    $description = $_POST['description']; 
-    
-    $page_count = isset($_POST['page_count']) ? intval($_POST['page_count']) : 0;
-    $file_size_text = isset($_POST['file_size_text']) ? trim($_POST['file_size_text']) : '';
-    $is_premium = isset($_POST['is_premium']) ? 1 : 0;
+    $description = trim($_POST['description']);
     
     // Chunk Upload-аас ирсэн замууд
     $uploaded_temp_path = isset($_POST['uploaded_temp_path']) ? $_POST['uploaded_temp_path'] : '';
     $uploaded_original_name = isset($_POST['uploaded_original_name']) ? $_POST['uploaded_original_name'] : '';
 
-    // Validation
-    if (empty($title) || $category_id == 0 || empty($uploaded_temp_path)) {
-        $error = "Гарчиг, ангилал болон файлыг заавал оруулна уу.";
+    if (empty($title) || empty($category_id) || empty($subcategory_id) || empty($uploaded_temp_path)) {
+        $error = "Файлын гарчиг, ангилал болон файлыг заавал оруулна уу.";
     } else {
         try {
             // 1. Файл байгаа эсэхийг шалгах (Админ фолдероос нэг түвшин дээш гарах)
             $real_temp_path = str_replace('../', '', $uploaded_temp_path);
-            $backend_temp_path = '../' . $real_temp_path; 
+            $backend_temp_path = '../' . $real_temp_path; // admin/..
 
-            // Security check
+            // Аюулгүй байдлын үүднээс temp path дотор хэрэглэгчийн ID байгаа эсэхийг шалгах
             if (strpos($real_temp_path, "uploads/temp/{$user_id}/") === false) {
                  throw new Exception("Файлын зам буруу байна. (Security Check Failed)");
             }
@@ -77,28 +68,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $file_size = filesize($backend_temp_path);
-            // Хэрэв хэмжээг гараар оруулаагүй бол автоматаар тооцно
-            if(empty($file_size_text)) {
-                if ($file_size >= 1048576) $file_size_text = number_format($file_size / 1048576, 1) . ' MB';
-                else $file_size_text = number_format($file_size / 1024, 0) . ' KB';
-            }
-
             $file_ext = strtolower(pathinfo($uploaded_original_name, PATHINFO_EXTENSION));
             
-            // Зөвшөөрөгдөх файлын төрлүүд (Kids хэсэгт PDF, Зураг ихэвчлэн ордог)
-            $allowed_types = ['pdf','doc','docx','jpg','png','zip'];
+            // Админд төрлийн хязгаарлалт байхгүй, гэхдээ DB-д хадгалахад хэрэгтэй
+            $allowed_types = ['pdf','doc','docx','xls','xlsx','ppt','pptx','txt','jpg','png','zip','rar','exe','mp3','mp4'];
             $file_type_db = in_array($file_ext, $allowed_types) ? $file_ext : 'other';
-            
-            $pdo_kids->beginTransaction();
 
-            // 2. Insert Record into kids_materials
-            $stmt = $pdo_kids->prepare("INSERT INTO kids_materials (category_id, title, target_age, description, is_premium, price, file_path, cover_image, file_size_text, page_count, status, created_at) VALUES (?, ?, ?, ?, ?, ?, '', '', ?, ?, 'active', NOW())");
-            
-            $stmt->execute([$category_id, $title, $age_group, $description, $is_premium, $price, $file_size_text, $page_count]);
-            $material_id = $pdo_kids->lastInsertId();
+            $pdo->beginTransaction();
+
+            // 2. Insert File Record (Status = APPROVED)
+            $stmt = $pdo->prepare("INSERT INTO files (user_id, category_id, subcategory_id, child_category_id, title, description, file_type, file_size, price, status, upload_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved', NOW())");
+            $stmt->execute([$user_id, $category_id, $subcategory_id, $child_category_id, $title, $description, $file_type_db, $file_size, $price]);
+            $file_id = $pdo->lastInsertId();
 
             // 3. Move File to Final Destination
-            $upload_dir = "../uploads/kids/{$material_id}/";
+            $upload_dir = "../uploads/files/{$user_id}/{$file_id}/";
             if (!is_dir($upload_dir)) {
                 if (!mkdir($upload_dir, 0777, true)) {
                     throw new Exception("Хавтас үүсгэж чадсангүй.");
@@ -106,73 +90,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $final_filename = basename($uploaded_original_name);
-            // Optional: Clean filename
             $final_filename = str_replace(' ', '_', $final_filename); 
             $final_path = $upload_dir . $final_filename;
 
             if (rename($backend_temp_path, $final_path)) {
                 // DB update (хадгалахдаа ../ -гүй хадгална)
-                $db_file_path = "uploads/kids/{$material_id}/" . $final_filename;
-                $update_stmt = $pdo_kids->prepare("UPDATE kids_materials SET file_path = ? WHERE id = ?");
-                $update_stmt->execute([$db_file_path, $material_id]);
+                $db_file_path = "uploads/files/{$user_id}/{$file_id}/" . $final_filename;
+                $update_stmt = $pdo->prepare("UPDATE files SET file_url = ? WHERE id = ?");
+                $update_stmt->execute([$db_file_path, $file_id]);
             } else {
                 throw new Exception("Файл зөөхөд алдаа гарлаа.");
             }
 
-            // 4. Handle Cover Image (Нэг cover зураг байдаг гэж тооцов)
-            if (isset($_FILES['cover_image']) && !empty($_FILES['cover_image']['name'])) {
-                $img = $_FILES['cover_image'];
-                if ($img['error'] === UPLOAD_ERR_OK) {
-                    $cover_name = 'cover.' . pathinfo($img['name'], PATHINFO_EXTENSION);
-                    $cover_path = $upload_dir . $cover_name;
-                    
-                    if (move_uploaded_file($img['tmp_name'], $cover_path)) {
-                        $db_cover = "uploads/kids/{$material_id}/" . $cover_name;
-                        $cover_stmt = $pdo_kids->prepare("UPDATE kids_materials SET cover_image = ? WHERE id = ?");
-                        $cover_stmt->execute([$db_cover, $material_id]);
-                    }
-                }
-            }
-            
-            // 5. Handle Multiple Previews
-            if (isset($_FILES['previews'])) {
+            // 4. Handle Cover Images
+            if (isset($_FILES['cover_image']) && !empty($_FILES['cover_image']['name'][0])) {
                 $preview_dir = $upload_dir . "previews/";
                 if (!is_dir($preview_dir)) {
                     mkdir($preview_dir, 0777, true);
                 }
 
-                $total_files = count($_FILES['previews']['name']);
-                
-                try {
-                    // Check if table exists first or just try insert
-                    $insert_preview_stmt = $pdo_kids->prepare("INSERT INTO kids_material_previews (material_id, image_path, sort_order) VALUES (?, ?, ?)");
-                    
-                    for ($i = 0; $i < $total_files; $i++) {
-                        if ($_FILES['previews']['error'][$i] == 0) {
-                            $p_ext = pathinfo($_FILES['previews']['name'][$i], PATHINFO_EXTENSION);
-                            $p_new_name = uniqid('prev_') . '.' . $p_ext;
-                            $p_destination = $preview_dir . $p_new_name;
+                $img_files = reArrayFiles($_FILES['cover_image']);
+                $uploaded_count = 0;
+
+                foreach ($img_files as $key => $img) {
+                    if ($uploaded_count >= 5) break; 
+                    if ($img['error'] === UPLOAD_ERR_OK) {
+                        $cover_new_name = uniqid() . '_preview_' . $key . '.' . pathinfo($img['name'], PATHINFO_EXTENSION);
+                        $cover_path = $preview_dir . $cover_new_name;
+                        
+                        if (move_uploaded_file($img['tmp_name'], $cover_path)) {
+                            // DB path
+                            $db_cover_path = "uploads/files/{$user_id}/{$file_id}/previews/" . $cover_new_name;
                             
-                            if (move_uploaded_file($_FILES['previews']['tmp_name'][$i], $p_destination)) {
-                                $db_preview_path = "uploads/kids/$material_id/previews/" . $p_new_name;
-                                $insert_preview_stmt->execute([$material_id, $db_preview_path, $i + 1]);
-                            }
+                            $prev_stmt = $pdo->prepare("INSERT INTO file_previews (file_id, preview_url, order_index) VALUES (?, ?, ?)");
+                            $prev_stmt->execute([$file_id, $db_cover_path, $uploaded_count + 1]);
+                            $uploaded_count++;
                         }
                     }
-                } catch (PDOException $e) {
-                    // Just log error if table doesn't exist
-                    error_log("Kids previews error: " . $e->getMessage());
                 }
             }
 
-            $pdo_kids->commit();
+            $pdo->commit();
             
-            header("Location: add_kids.php?success=1");
+            // No Email Notification needed for admin upload
+            
+            header("Location: file_upload.php?success=1");
             exit;
 
         } catch (Exception $e) {
-            if ($pdo_kids->inTransaction()) {
-                $pdo_kids->rollBack();
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
             }
             $error = "Алдаа гарлаа: " . $e->getMessage();
             // Clean up temp file
@@ -183,15 +150,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// Fetch Kids Categories
-$cats = $pdo_kids->query("SELECT * FROM kids_categories ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
+// Data Fetching
+$cats = $pdo->query("SELECT * FROM categories WHERE type = 'file' ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
+$subcats = $pdo->query("SELECT * FROM subcategories ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
+$child_cats = $pdo->query("SELECT * FROM child_category ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
 <html lang="mn">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Хүүхдийн материал нэмэх - Filezone Admin</title>
+    <title>Админ файл оруулах - Filezone Admin</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -201,7 +170,6 @@ $cats = $pdo_kids->query("SELECT * FROM kids_categories ORDER BY name ASC")->fet
     <?php include '../api/tinymce_loader.php'; ?>
     <script>
       document.addEventListener('DOMContentLoaded', function() {
-          // Initialize TinyMCE for description
           initFilezoneEditor('#description');
       });
     </script>
@@ -220,10 +188,10 @@ $cats = $pdo_kids->query("SELECT * FROM kids_categories ORDER BY name ASC")->fet
         <header class="bg-white border-b border-slate-200 h-16 flex items-center justify-between px-6 shadow-sm z-10">
             <div class="flex items-center gap-4">
                 <button id="mobileMenuBtn" class="md:hidden text-slate-500"><i class="fas fa-bars text-xl"></i></button>
-                <h1 class="text-xl font-bold text-slate-800">Хүүхдийн материал нэмэх</h1>
+                <h1 class="text-xl font-bold text-slate-800">Шинэ файл оруулах</h1>
             </div>
             <div class="flex items-center gap-3">
-                <a href="kids.php" class="text-slate-500 hover:text-slate-700 text-sm font-medium">
+                <a href="files.php" class="text-slate-500 hover:text-slate-700 text-sm font-medium">
                     <i class="fas fa-arrow-left mr-1"></i> Буцах
                 </a>
             </div>
@@ -262,20 +230,20 @@ $cats = $pdo_kids->query("SELECT * FROM kids_categories ORDER BY name ASC")->fet
 
                         <div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
                             <div class="p-6 border-b border-slate-100">
-                                <h3 class="font-bold text-slate-800">Материалын мэдээлэл</h3>
+                                <h3 class="font-bold text-slate-800">Үндсэн мэдээлэл</h3>
                             </div>
                             <div class="p-6 space-y-6">
                                 
                                 <!-- File Upload Zone -->
                                 <div>
-                                    <label class="block text-sm font-medium text-slate-700 mb-2">Үндсэн файл (PDF, Word, Zip) <span class="text-red-500">*</span></label>
+                                    <label class="block text-sm font-medium text-slate-700 mb-2">Файл сонгох <span class="text-red-500">*</span></label>
                                     <div class="bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl p-8 text-center hover:bg-indigo-50 hover:border-indigo-300 transition cursor-pointer group relative" id="drop-zone">
                                         <input type="file" id="file-upload" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onchange="handleFileSelect(this)" required>
                                         <div class="w-16 h-16 bg-white text-indigo-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm group-hover:scale-110 transition duration-300">
                                             <i class="fas fa-cloud-upload-alt text-2xl"></i>
                                         </div>
-                                        <h3 class="text-lg font-bold text-slate-800 mb-2" id="drop-zone-text">Материалаа энд чирж оруулах</h3>
-                                        <p class="text-sm text-slate-500">Том хэмжээтэй файл байж болно.</p>
+                                        <h3 class="text-lg font-bold text-slate-800 mb-2" id="drop-zone-text">Файлаа энд чирж оруулах</h3>
+                                        <p class="text-sm text-slate-500">Бүх төрлийн файл зөвшөөрнө (Хэмжээ хязгааргүй)</p>
                                     </div>
 
                                     <!-- Progress Bar -->
@@ -293,102 +261,72 @@ $cats = $pdo_kids->query("SELECT * FROM kids_categories ORDER BY name ASC")->fet
 
                                 <!-- Title -->
                                 <div>
-                                    <label class="block text-sm font-medium text-slate-700 mb-1.5">Материалын нэр <span class="text-red-500">*</span></label>
-                                    <input type="text" name="title" required class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none" placeholder="Жишээ: Тоо бодож сурцгаая - 1-р анги">
+                                    <label class="block text-sm font-medium text-slate-700 mb-1.5">Файлын гарчиг <span class="text-red-500">*</span></label>
+                                    <input type="text" name="title" required class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none" placeholder="Жишээ: Санхүүгийн тайлангийн загвар">
                                 </div>
 
-                                <!-- Categories & Age -->
-                                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                    <div class="space-y-3">
-                                        <div>
-                                            <label class="block text-sm font-medium text-slate-700 mb-1.5">Ангилал сонгох <span class="text-red-500">*</span></label>
-                                            <select name="category_id" id="category_id" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none bg-white">
-                                                <option value="">Сонгоно уу...</option>
-                                                <?php foreach($cats as $cat): ?>
-                                                    <option value="<?php echo $cat['id']; ?>"><?php echo htmlspecialchars($cat['name']); ?></option>
-                                                <?php endforeach; ?>
-                                            </select>
-                                        </div>
-                                    </div>
-                                    
+                                <!-- Categories -->
+                                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                                     <div>
-                                        <label class="block text-sm font-medium text-slate-700 mb-1.5">Насны ангилал</label>
-                                        <select name="target_age" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none bg-white">
+                                        <label class="block text-sm font-medium text-slate-700 mb-1.5">Үндсэн ангилал <span class="text-red-500">*</span></label>
+                                        <select name="category_id" id="categorySelect" required onchange="updateSubcategories()" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none bg-white">
                                             <option value="">Сонгоно уу...</option>
-                                            <option value="2-3">2-3 нас</option>
-                                            <option value="3-4">3-4 нас</option>
-                                            <option value="4-5">4-5 нас</option>
-                                            <option value="school_prep">Сургуулийн бэлтгэл</option>
-                                            <option value="grade-1">1-р анги</option>
-                                            <option value="all">Бүх нас</option>
+                                            <?php foreach($cats as $cat): ?>
+                                                <option value="<?php echo $cat['id']; ?>"><?php echo htmlspecialchars($cat['name']); ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-slate-700 mb-1.5">Дэд ангилал <span class="text-red-500">*</span></label>
+                                        <select name="subcategory_id" id="subcategorySelect" required onchange="updateChildCategories()" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none bg-white disabled:bg-slate-100 disabled:text-slate-400" disabled>
+                                            <option value="">Эхлээд үндсэн ангилал</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-slate-700 mb-1.5">Дэдийн дэд ангилал</label>
+                                        <select name="child_category_id" id="childCategorySelect" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none bg-white disabled:bg-slate-100 disabled:text-slate-400" disabled>
+                                            <option value="">---</option>
                                         </select>
                                     </div>
                                 </div>
 
-                                <!-- Premium Checkbox -->
-                                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                    <div class="bg-slate-50 p-4 rounded-lg border border-slate-200">
-                                        <div class="flex items-center">
-                                            <input type="checkbox" id="is_premium" name="is_premium" class="w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500">
-                                            <label for="is_premium" class="ml-2 text-sm font-medium text-slate-800">Төлбөртэй материал (Premium)</label>
+                                <!-- Price -->
+                                <div>
+                                    <label class="block text-sm font-medium text-slate-700 mb-1.5">Үнэ (MNT)</label>
+                                    <div class="relative">
+                                        <input type="text" name="price" id="priceInput" required class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none pl-4" placeholder="5,000" oninput="formatPrice(this)">
+                                        <div class="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                                            <span class="text-slate-500 text-xs">₮</span>
                                         </div>
-                                        <p class="text-xs text-slate-500 mt-2 ml-6">Сонговол хэрэглэгч эрх авч байж үзнэ, сонгохгүй бол үнэгүй.</p>
                                     </div>
-                                </div>
-
-                                <!-- Page Count & File Size Text -->
-                                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                    <div>
-                                        <label class="block text-sm font-medium text-slate-700 mb-1.5">Хуудасны тоо</label>
-                                        <input type="number" name="page_count" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none" value="1">
-                                        <p class="text-xs text-slate-400 mt-1">Зөвхөн тоо оруулна уу.</p>
-                                    </div>
-                                    <div>
-                                        <label class="block text-sm font-medium text-slate-700 mb-1.5">Хэмжээ (Текстээр)</label>
-                                        <input type="text" name="file_size_text" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none" placeholder="Жнь: 5MB">
-                                        <p class="text-xs text-slate-400 mt-1">Хоосон орхивол файлын бодит хэмжээгээр автоматаар тооцно.</p>
-                                    </div>
+                                    <p class="text-xs text-slate-500 mt-1">0 гэж бичвэл "Үнэгүй" болно.</p>
                                 </div>
 
                                 <!-- Description -->
                                 <div>
                                     <label class="block text-sm font-medium text-slate-700 mb-1.5">Дэлгэрэнгүй тайлбар</label>
-                                    <!-- TinyMCE will attach here -->
                                     <textarea name="description" id="description" rows="10" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm"></textarea>
                                 </div>
 
-                                <!-- Cover Image (Single) -->
+                                <!-- Cover Images -->
                                 <div>
-                                    <label class="block text-sm font-medium text-slate-700 mb-1.5">Ковер зураг</label>
-                                    <div class="flex items-center gap-4">
-                                        <div id="cover-preview" class="w-24 h-24 bg-gray-100 rounded-lg border border-dashed border-gray-300 flex items-center justify-center text-gray-400 overflow-hidden">
-                                            <i class="fas fa-image text-2xl"></i>
-                                        </div>
-                                        <div>
-                                            <input type="file" name="cover_image" id="cover_image" class="hidden" accept="image/*" onchange="previewCover(this)">
-                                            <label for="cover_image" class="cursor-pointer bg-white border border-slate-300 text-slate-700 px-4 py-2 rounded-lg text-sm font-bold hover:bg-slate-50 shadow-sm inline-flex items-center gap-2">
-                                                <i class="fas fa-upload"></i> Зураг сонгох
-                                            </label>
-                                            <p class="text-xs text-slate-500 mt-1">Зөвхөн JPG, PNG (Max 5MB)</p>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <!-- Additional Previews -->
-                                <div>
-                                    <label class="block text-sm font-medium text-slate-700 mb-2">Нэмэлт зургууд (Optional)</label>
-                                    <div class="border-2 border-dashed border-slate-300 rounded-lg p-4 bg-slate-50">
-                                        <input type="file" name="previews[]" multiple class="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" accept="image/*">
-                                        <p class="text-xs text-gray-500 mt-1">Олон зураг зэрэг сонгож болно.</p>
+                                    <label class="block text-sm font-medium text-slate-700 mb-1.5">Нүүр зураг (Max 5)</label>
+                                    <div class="space-y-3">
+                                        <input type="file" name="cover_image[]" id="cover-upload-storage" class="hidden" multiple>
+                                        <input type="file" id="cover-upload-picker" class="hidden" accept="image/*" multiple onchange="handleCoverSelect(this)">
+                                        <label for="cover-upload-picker" class="inline-flex items-center gap-2 bg-white border border-slate-300 text-slate-700 px-4 py-2 rounded-lg text-sm font-bold hover:bg-slate-50 cursor-pointer shadow-sm">
+                                            <i class="fas fa-image"></i> Зураг нэмэх
+                                        </label>
+                                        <div id="preview-gallery" class="grid grid-cols-2 md:grid-cols-5 gap-3"></div>
                                     </div>
                                 </div>
 
                                 <hr class="border-slate-100">
 
                                 <div class="flex justify-end gap-3">
-                                    <a href="kids.php" class="px-6 py-2.5 bg-white border border-slate-300 text-slate-700 font-bold rounded-xl hover:bg-slate-50 transition">Болих</a>
+                                    <a href="files.php" class="px-6 py-2.5 bg-white border border-slate-300 text-slate-700 font-bold rounded-xl hover:bg-slate-50 transition">Болих</a>
                                     <button type="button" id="startUploadBtn" onclick="startChunkUpload()" class="px-6 py-2.5 bg-indigo-600 text-white font-bold rounded-xl shadow-lg shadow-indigo-500/30 hover:bg-indigo-700 hover:-translate-y-0.5 transition-all">
-                                        Нийтлэх
+                                        Нийтлэх (Шууд зөвшөөрөх)
                                     </button>
                                 </div>
 
@@ -400,20 +338,24 @@ $cats = $pdo_kids->query("SELECT * FROM kids_categories ORDER BY name ASC")->fet
                 <div class="lg:col-span-1">
                     <div class="bg-indigo-50 border border-indigo-100 rounded-xl p-6 sticky top-6">
                         <h3 class="font-bold text-indigo-900 mb-4 flex items-center gap-2">
-                            <i class="fas fa-child"></i> Kids хэсэг
+                            <i class="fas fa-shield-alt"></i> Админ горим
                         </h3>
                         <ul class="space-y-3 text-sm text-indigo-800">
                             <li class="flex gap-2">
                                 <i class="fas fa-check-circle mt-0.5 text-indigo-600"></i>
-                                <span>Хүүхдийн контент нь шууд нийтлэгдэнэ.</span>
+                                <span>Файл шууд "Approved" төлөвтэй орно.</span>
                             </li>
                             <li class="flex gap-2">
-                                <i class="fas fa-file-pdf mt-0.5 text-indigo-600"></i>
-                                <span>Дасгал ажил, будах ном зэрэг PDF файлууд оруулахад тохиромжтой.</span>
+                                <i class="fas fa-check-circle mt-0.5 text-indigo-600"></i>
+                                <span>VirusTotal шалгалт хийгдэхгүй.</span>
                             </li>
                             <li class="flex gap-2">
-                                <i class="fas fa-bolt mt-0.5 text-indigo-600"></i>
-                                <span>Том хэмжээтэй файлыг Chunk технологиор хурдан хуулна.</span>
+                                <i class="fas fa-check-circle mt-0.5 text-indigo-600"></i>
+                                <span>Файлын хэмжээнд хязгаарлалт байхгүй.</span>
+                            </li>
+                            <li class="flex gap-2">
+                                <i class="fas fa-check-circle mt-0.5 text-indigo-600"></i>
+                                <span>Имэйл мэдэгдэл илгээгдэхгүй.</span>
                             </li>
                         </ul>
                     </div>
@@ -426,6 +368,9 @@ $cats = $pdo_kids->query("SELECT * FROM kids_categories ORDER BY name ASC")->fet
 
 <!-- SCRIPTS -->
 <script>
+    // --- Data ---
+    const subcats = <?php echo json_encode($subcats); ?>;
+    const childCats = <?php echo json_encode($child_cats); ?>;
     const currentUserId = <?php echo json_encode($user_id); ?>;
 
     // --- Price Format ---
@@ -436,15 +381,92 @@ $cats = $pdo_kids->query("SELECT * FROM kids_categories ORDER BY name ASC")->fet
         input.value = numValue.toLocaleString('en-US');
     }
 
-    // --- Cover Preview ---
-    function previewCover(input) {
-        if (input.files && input.files[0]) {
+    // --- Category Logic ---
+    function updateSubcategories() {
+        const catSelect = document.getElementById('categorySelect');
+        const subSelect = document.getElementById('subcategorySelect');
+        const childSelect = document.getElementById('childCategorySelect');
+        
+        const selectedCatId = catSelect.value;
+        subSelect.innerHTML = '<option value="">Сонгоно уу...</option>';
+        childSelect.innerHTML = '<option value="">---</option>';
+        childSelect.disabled = true;
+
+        if (selectedCatId) {
+            const filtered = subcats.filter(s => s.category_id == selectedCatId);
+            if(filtered.length > 0) {
+                filtered.forEach(s => {
+                    const opt = document.createElement('option');
+                    opt.value = s.id;
+                    opt.textContent = s.name;
+                    subSelect.appendChild(opt);
+                });
+                subSelect.disabled = false;
+            } else {
+                subSelect.innerHTML = '<option value="">Дэд ангилал алга</option>';
+                subSelect.disabled = true;
+            }
+        } else {
+            subSelect.innerHTML = '<option value="">Эхлээд үндсэн ангилал</option>';
+            subSelect.disabled = true;
+        }
+    }
+
+    function updateChildCategories() {
+        const subSelect = document.getElementById('subcategorySelect');
+        const childSelect = document.getElementById('childCategorySelect');
+        const selectedSubId = subSelect.value;
+        childSelect.innerHTML = '<option value="">Сонгоно уу...</option>';
+        
+        if (selectedSubId) {
+            const filtered = childCats.filter(c => c.subcategory_id == selectedSubId);
+            if(filtered.length > 0) {
+                filtered.forEach(c => {
+                    const opt = document.createElement('option');
+                    opt.value = c.id;
+                    opt.textContent = c.name;
+                    childSelect.appendChild(opt);
+                });
+                childSelect.disabled = false;
+            } else {
+                childSelect.innerHTML = '<option value="">---</option>';
+                childSelect.disabled = true;
+            }
+        } else {
+            childSelect.disabled = true;
+        }
+    }
+
+    // --- Cover Image Logic ---
+    let uploadedImages = [];
+    function handleCoverSelect(input) {
+        const files = Array.from(input.files);
+        if (uploadedImages.length + files.length > 5) { alert("Та дээд тал нь 5 зураг оруулах боломжтой."); return; }
+        files.forEach(file => uploadedImages.push(file));
+        renderGallery();
+        updateInputFiles();
+        input.value = ''; 
+    }
+    function renderGallery() {
+        const gallery = document.getElementById('preview-gallery');
+        gallery.innerHTML = '';
+        uploadedImages.forEach((file, index) => {
             const reader = new FileReader();
             reader.onload = function(e) {
-                document.getElementById('cover-preview').innerHTML = `<img src="${e.target.result}" class="w-full h-full object-cover">`;
+                const div = document.createElement('div');
+                div.className = 'relative w-full h-24 bg-gray-100 rounded-lg overflow-hidden group border border-slate-200';
+                div.innerHTML = `<img src="${e.target.result}" class="w-full h-full object-cover">
+                                 <button type="button" onclick="removeImage(${index})" class="absolute top-1 right-1 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition">&times;</button>`;
+                gallery.appendChild(div);
             }
-            reader.readAsDataURL(input.files[0]);
-        }
+            reader.readAsDataURL(file);
+        });
+    }
+    function removeImage(index) { uploadedImages.splice(index, 1); renderGallery(); updateInputFiles(); }
+    function updateInputFiles() {
+        const dataTransfer = new DataTransfer();
+        uploadedImages.forEach(file => { dataTransfer.items.add(file); });
+        document.getElementById('cover-upload-storage').files = dataTransfer.files;
     }
 
     // --- CHUNK UPLOAD LOGIC ---
@@ -461,12 +483,12 @@ $cats = $pdo_kids->query("SELECT * FROM kids_categories ORDER BY name ASC")->fet
 
     async function startChunkUpload() {
         const title = document.querySelector('input[name="title"]').value;
-        const catId = document.getElementById('category_id').value;
+        const cat = document.getElementById('categorySelect').value;
+        const subcat = document.getElementById('subcategorySelect').value;
+        const price = document.getElementById('priceInput').value;
 
-        if(!selectedFile) { alert('Материал файлаа сонгоно уу!'); return; }
-        if(!title) { alert('Гарчиг заавал оруулна уу!'); return; }
-        // Category validation
-        if(catId === "") { alert('Ангилал сонгоно уу!'); return; }
+        if(!selectedFile) { alert('Файлаа сонгоно уу!'); return; }
+        if(!title || !cat || !subcat || price === '') { alert('Бүх талбарыг бөглөнө үү!'); return; }
 
         // UI Setup
         const btn = document.getElementById('startUploadBtn');
