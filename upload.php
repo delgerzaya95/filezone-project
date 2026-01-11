@@ -258,7 +258,7 @@ include 'includes/header.php';
 ?>
 
 <!-- TinyMCE Script -->
-<script src="https://cdn.tiny.cloud/1/g492qv0cyczptbbzcso4exirfkhg3l20o9z13ujy2i0arcw5/tinymce/8/tinymce.min.js" referrerpolicy="origin" crossorigin="anonymous"></script>
+<script src="https://cdn.tiny.cloud/1/ynh1rnqvsvfamly2llpevnxusnk5dr6fpbxh72ajfvferijv/tinymce/8/tinymce.min.js" referrerpolicy="origin" crossorigin="anonymous"></script>
 <script>
   tinymce.init({
     selector: '#description',

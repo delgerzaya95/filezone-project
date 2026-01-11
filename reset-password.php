@@ -1,3 +1,13 @@
+<?php
+session_start();
+
+// URL параметрээс token болон email шалгах
+$token = $_GET['token'] ?? '';
+$email = $_GET['email'] ?? '';
+
+// Аль формыг харуулах вэ? (true = Шинэ нууц үг оруулах, false = Имэйл оруулах)
+$isResetMode = !empty($token) && !empty($email);
+?>
 <!DOCTYPE html>
 <html lang="mn">
 <head>
@@ -7,8 +17,45 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="assets/css/style.css">
-    <script src="assets/js/tailwind-config.js"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#eff6ff', 100: '#dbeafe', 200: '#bfdbfe', 300: '#93c5fd', 400: '#60a5fa',
+                            500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8', 800: '#1e40af', 900: '#1e3a8a',
+                        }
+                    },
+                    fontFamily: { sans: ['Inter', 'sans-serif'] }
+                }
+            }
+        }
+    </script>
+    <style>
+        .bg-pattern {
+            background-color: #f8fafc;
+            background-image: radial-gradient(#e2e8f0 1px, transparent 1px);
+            background-size: 24px 24px;
+        }
+        .btn-shine {
+            position: relative;
+            overflow: hidden;
+        }
+        .btn-shine::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+            transition: 0.5s;
+        }
+        .btn-shine:hover::after {
+            left: 100%;
+        }
+    </style>
 </head>
 <body class="text-gray-700 antialiased font-sans bg-pattern min-h-screen flex flex-col">
 
@@ -57,29 +104,92 @@
                     <div class="w-16 h-16 bg-brand-50 rounded-full flex items-center justify-center mx-auto mb-4 text-brand-600 text-2xl">
                         <i class="fas fa-key"></i>
                     </div>
-                    <h1 class="text-2xl font-bold text-gray-900 mb-2">Нууц үг сэргээх</h1>
-                    <p class="text-sm text-gray-500">Бүртгэлтэй имэйл хаягаа оруулна уу. Бид танд нууц үг сэргээх холбоос илгээх болно.</p>
+                    <h1 class="text-2xl font-bold text-gray-900 mb-2">
+                        <?php echo $isResetMode ? 'Шинэ нууц үг зохиох' : 'Нууц үг сэргээх'; ?>
+                    </h1>
+                    <p class="text-sm text-gray-500">
+                        <?php echo $isResetMode 
+                            ? 'Та шинэ нууц үгээ оруулан баталгаажуулна уу.' 
+                            : 'Бүртгэлтэй имэйл хаягаа оруулна уу. Бид танд нууц үг сэргээх холбоос илгээх болно.'; ?>
+                    </p>
                 </div>
+
+                <!-- ALERT MESSAGES (Success/Error) -->
+                <!-- Энд зөвхөн энэ хуудсанд хамаатай мессежүүдийг шүүж харуулах хэрэгтэй -->
+                <?php if (isset($_SESSION['flash_success'])): ?>
+                    <!-- "Таны нууц үг амжилттай солигдлоо" гэсэн мессежийг энэ хуудсан дээр харуулахгүй -->
+                    <?php if (strpos($_SESSION['flash_success'], 'Таны нууц үг амжилттай солигдлоо') === false): ?>
+                        <div class="mb-6 bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded relative text-sm" role="alert">
+                            <strong class="font-bold"><i class="fas fa-check-circle mr-1"></i> Амжилттай!</strong>
+                            <span class="block sm:inline"><?php echo $_SESSION['flash_success']; ?></span>
+                        </div>
+                        <?php unset($_SESSION['flash_success']); ?>
+                    <?php endif; ?>
+                <?php endif; ?>
+
+                <?php if (isset($_SESSION['flash_error'])): ?>
+                    <div class="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded relative text-sm" role="alert">
+                        <strong class="font-bold"><i class="fas fa-exclamation-circle mr-1"></i> Алдаа!</strong>
+                        <span class="block sm:inline"><?php echo $_SESSION['flash_error']; ?></span>
+                    </div>
+                    <?php unset($_SESSION['flash_error']); ?>
+                <?php endif; ?>
 
                 <!-- Reset Form -->
                 <form action="reset_password_process.php" method="POST" class="space-y-5">
                     
-                    <!-- Email Input -->
-                    <div>
-                        <label for="email" class="block text-sm font-medium text-gray-700 mb-1.5">Имэйл хаяг</label>
-                        <div class="relative">
-                            <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-400">
-                                <i class="fas fa-envelope text-sm"></i>
-                            </span>
-                            <input type="email" id="email" name="email" required placeholder="name@example.com" 
-                                class="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:bg-white transition-all">
+                    <?php if (!$isResetMode): ?>
+                        <!-- A. REQUEST RESET MODE (Email Input) -->
+                        <input type="hidden" name="action" value="request_reset">
+                        
+                        <div>
+                            <label for="email" class="block text-sm font-medium text-gray-700 mb-1.5">Имэйл хаяг</label>
+                            <div class="relative">
+                                <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-400">
+                                    <i class="fas fa-envelope text-sm"></i>
+                                </span>
+                                <input type="email" id="email" name="email" required placeholder="name@example.com" 
+                                    class="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:bg-white transition-all">
+                            </div>
                         </div>
-                    </div>
 
-                    <!-- Submit Button -->
-                    <button type="submit" class="w-full bg-brand-600 hover:bg-brand-700 text-white font-bold py-2.5 rounded-lg shadow-lg shadow-brand-500/30 transition-all transform hover:-translate-y-0.5 btn-shine">
-                        Холбоос илгээх
-                    </button>
+                        <button type="submit" class="w-full bg-brand-600 hover:bg-brand-700 text-white font-bold py-2.5 rounded-lg shadow-lg shadow-brand-500/30 transition-all transform hover:-translate-y-0.5 btn-shine">
+                            Холбоос илгээх
+                        </button>
+
+                    <?php else: ?>
+                        <!-- B. RESET PASSWORD MODE (New Password Input) -->
+                        <input type="hidden" name="action" value="reset_password">
+                        <input type="hidden" name="token" value="<?php echo htmlspecialchars($token); ?>">
+                        <input type="hidden" name="email" value="<?php echo htmlspecialchars($email); ?>">
+
+                        <div>
+                            <label for="password" class="block text-sm font-medium text-gray-700 mb-1.5">Шинэ нууц үг</label>
+                            <div class="relative">
+                                <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-400">
+                                    <i class="fas fa-lock text-sm"></i>
+                                </span>
+                                <input type="password" id="password" name="password" required placeholder="••••••••" 
+                                    class="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:bg-white transition-all">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label for="confirm_password" class="block text-sm font-medium text-gray-700 mb-1.5">Нууц үг давтах</label>
+                            <div class="relative">
+                                <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-400">
+                                    <i class="fas fa-lock text-sm"></i>
+                                </span>
+                                <input type="password" id="confirm_password" name="confirm_password" required placeholder="••••••••" 
+                                    class="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:bg-white transition-all">
+                            </div>
+                        </div>
+
+                        <button type="submit" class="w-full bg-brand-600 hover:bg-brand-700 text-white font-bold py-2.5 rounded-lg shadow-lg shadow-brand-500/30 transition-all transform hover:-translate-y-0.5 btn-shine">
+                            Нууц үг шинэчлэх
+                        </button>
+                    <?php endif; ?>
+
                 </form>
 
                 <!-- Divider -->

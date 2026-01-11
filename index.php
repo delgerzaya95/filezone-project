@@ -82,6 +82,39 @@ $new_files = $new_stmt->fetchAll(PDO::FETCH_ASSOC);
     <!-- Main Content -->
     <main class="flex-1 py-6 min-w-0">
         
+        <!-- ============================================== -->
+        <!-- START: BETA NOTIFICATION BANNER (ТУРШИЛТЫН ХУВИЛБАР) -->
+        <!-- ============================================== -->
+        <div id="beta-notification" class="mx-4 lg:mx-0 mb-6 bg-yellow-50 border-l-4 border-yellow-400 p-4 relative shadow-sm rounded-r-lg">
+            <div class="flex items-start">
+                <div class="flex-shrink-0">
+                    <!-- Warning Icon -->
+                    <i class="fas fa-hammer text-yellow-500 text-xl mt-0.5"></i>
+                </div>
+                <div class="ml-3 pr-8">
+                    <h3 class="text-sm font-bold text-yellow-800 uppercase tracking-wide">
+                        Туршилтын хувилбар (Beta)
+                    </h3>
+                    <div class="mt-1 text-sm text-yellow-700 leading-relaxed">
+                        <p>
+                            Энэхүү веб сайт нь одоогоор хөгжүүлэлтийн шатанд явж байгаа бөгөөд <strong>удахгүй бүрэн ашиглалтанд орно.</strong> 
+                            Та бүртгүүлж, системтэй танилцах боломжтой ч зарим нэг алдаа гарч болзошгүйг анхаарна уу. 
+                            <strong>Анхааруулга: Энд одоогоор байгаа контентууд бодит биш тест файл шүү.</strong>
+                            Бид системийг 100% найдвартай болгохоор ажиллаж байна.
+                        </p>
+                    </div>
+                </div>
+                <!-- Close Button -->
+                <div class="absolute top-0 right-0 pt-3 pr-3">
+                    <button type="button" onclick="document.getElementById('beta-notification').remove()" class="inline-flex rounded-md p-1.5 text-yellow-500 hover:bg-yellow-100 focus:outline-none transition-colors">
+                        <span class="sr-only">Хаах</span>
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+        <!-- END: BETA NOTIFICATION BANNER -->
+        
         <!-- NEW: Single Motion Graphic Hero Section (Compact & Animated) -->
         <div class="relative w-full mb-8 overflow-hidden rounded-2xl bg-indigo-900 text-white shadow-xl mx-4 lg:mx-0">
             <!-- Animated Background Layers -->

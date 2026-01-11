@@ -160,7 +160,7 @@ try {
     <div class="space-y-1 mb-8">
         <h3 class="px-3 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Платформууд</h3>
         
-        <a href="Kids/index.php" class="flex items-center gap-3 px-3 py-2 text-gray-600 hover:bg-gray-100 hover:text-gray-900 rounded-lg font-medium transition-colors group">
+        <a href="kids/" class="flex items-center gap-3 px-3 py-2 text-gray-600 hover:bg-gray-100 hover:text-gray-900 rounded-lg font-medium transition-colors group">
             <div class="w-5 h-5 rounded bg-pink-100 text-pink-500 flex items-center justify-center group-hover:bg-pink-500 group-hover:text-white transition">
                 <i class="fas fa-shapes text-xs"></i>
             </div>

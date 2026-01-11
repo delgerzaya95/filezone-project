@@ -40,6 +40,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $_SESSION['role'] = $user['role'];
                 $_SESSION['avatar'] = $user['avatar_url']; // avatar_url багана байгаа гэж үзэв
                 
+                // --- "НАМАЙГ САНА" (REMEMBER ME) ---
+                if (isset($_POST['remember-me'])) {
+                    // Cookie үүсгэх (30 хоног)
+                    // Анхаар: Бодит төсөлд token ашиглаж database-д хадгалах нь илүү аюулгүй.
+                    // Энэ удаад хялбар шийдлээр user_id-г base64 кодчилж хадгалав.
+                    $cookie_value = base64_encode($user['id']);
+                    setcookie('remember_user', $cookie_value, time() + (86400 * 30), "/"); // 86400 = 1 day
+                }
+
                 // Сүүлд нэвтэрсэн цагийг шинэчлэх
                 $updateStmt = $pdo->prepare("UPDATE users SET last_active = NOW() WHERE id = :id");
                 $updateStmt->execute([':id' => $user['id']]);
@@ -153,6 +162,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </div>
                 <?php endif; ?>
 
+                <!-- Success Message (Added from reset password process) -->
+                <?php if (isset($_SESSION['flash_success'])): ?>
+                    <div class="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded relative mb-4 text-sm flex items-center gap-2" role="alert">
+                        <i class="fas fa-check-circle text-green-500"></i>
+                        <div>
+                            <strong class="font-bold">Амжилттай!</strong>
+                            <span class="block sm:inline"><?php echo $_SESSION['flash_success']; ?></span>
+                        </div>
+                    </div>
+                    <?php unset($_SESSION['flash_success']); ?>
+                <?php endif; ?>
+
                 <form action="login.php" method="POST" class="space-y-4">
                     
                     <!-- Email/Username Input -->
@@ -172,7 +193,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div>
                         <div class="flex justify-between items-center mb-1.5">
                             <label for="password" class="block text-sm font-medium text-gray-700">Нууц үг</label>
-                            <a href="forgot-password.php" class="text-xs font-medium text-brand-600 hover:text-brand-700 hover:underline">Нууц үгээ мартсан?</a>
+                            <!-- UPDATED: Point to reset-password.php -->
+                            <a href="reset-password.php" class="text-xs font-medium text-brand-600 hover:text-brand-700 hover:underline">Нууц үгээ мартсан?</a>
                         </div>
                         <div class="relative">
                             <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-400">

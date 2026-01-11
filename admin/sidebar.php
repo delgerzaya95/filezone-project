@@ -38,7 +38,6 @@ function getIconClass($page_names) {
 ?>
 
 <!-- SIDEBAR -->
-<!-- Зассан хэсэг: 'fixed left-0 top-0 h-screen' классуудыг авч, flex бүтэцтэй нийцүүлэв -->
 <aside id="sidebar" class="bg-slate-900 text-slate-400 w-64 flex-shrink-0 hidden md:flex flex-col transition-all duration-300 z-30 shadow-2xl overflow-y-auto no-scrollbar">
     
     <!-- Brand -->
@@ -62,8 +61,41 @@ function getIconClass($page_names) {
             Хяналтын самбар
         </a>
 
+        <!-- SPECIAL SECTION: KIDS -->
+        <div class="px-4 py-2 my-2">
+            <?php 
+                $isKidsActive = in_array($current_page, ['kids.php', 'add_kids.php', 'edit_kids.php']);
+            ?>
+            <a href="kids.php" class="group relative flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-all duration-300
+                <?php echo $isKidsActive 
+                    ? 'bg-slate-800 text-white border border-indigo-500/30 shadow-md' 
+                    : 'bg-slate-800/30 text-indigo-200 hover:bg-slate-800 hover:text-white border border-transparent hover:border-indigo-500/20'; 
+                ?>">
+                
+                <div class="flex items-center w-full">
+                    <!-- Icon Box -->
+                    <div class="mr-3 flex items-center justify-center w-8 h-8 rounded-md bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-sm group-hover:scale-105 transition-transform">
+                        <i class="fas fa-rocket text-xs"></i>
+                    </div>
+                    
+                    <div class="flex-1">
+                        <span class="block text-sm font-semibold tracking-wide">KIDS Zone</span>
+                    </div>
+
+                    <!-- Subtle Badge -->
+                    <?php if(!$isKidsActive): ?>
+                        <span class="bg-indigo-500/20 text-indigo-300 text-[9px] font-bold px-1.5 py-0.5 rounded border border-indigo-500/30 group-hover:bg-indigo-500 group-hover:text-white transition-colors">
+                            NEW
+                        </span>
+                    <?php else: ?>
+                        <i class="fas fa-chevron-right text-xs opacity-50 text-indigo-400"></i>
+                    <?php endif; ?>
+                </div>
+            </a>
+        </div>
+
         <!-- SECTION: CONTENT -->
-        <p class="px-6 text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2 mt-6">Контент Удирдлага</p>
+        <p class="px-6 text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2 mt-2">Контент Удирдлага</p>
 
         <a href="files.php" class="<?php echo getLinkClass('files.php'); ?> flex items-center px-6 py-3 text-sm font-medium group transition-all duration-200">
             <i class="fas fa-folder-open w-5 text-center mr-3 <?php echo getIconClass('files.php'); ?>"></i>
