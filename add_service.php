@@ -1,10 +1,14 @@
 <?php
+// add_service.php (Root directory) - Final Version with Email Notification, AVIF support & JS Fixes
+
 // Session эхлүүлэх
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
 require_once 'includes/db.php';
+// Mэйл илгээх файлыг оруулж ирэх (Brevo API)
+require_once 'api/brevo_email.php';
 
 // Нэвтрээгүй бол login хуудас руу шилжүүлэх
 if (!isset($_SESSION['user_id'])) {
@@ -16,12 +20,24 @@ $user_id = $_SESSION['user_id'];
 $message = '';
 $error = '';
 
-// Ангилал татах (service_categories)
+// Helper function to re-array $_FILES
+function reArrayFiles(&$file_post) {
+    $file_ary = array();
+    $file_count = count($file_post['name']);
+    $file_keys = array_keys($file_post);
+    for ($i=0; $i<$file_count; $i++) {
+        foreach ($file_keys as $key) {
+            $file_ary[$i][$key] = $file_post[$key][$i];
+        }
+    }
+    return $file_ary;
+}
+
+// Ангилал татах
 try {
     $categories = $pdo->query("SELECT id, name FROM service_categories ORDER BY name ASC")->fetchAll();
 } catch (PDOException $e) {
     $categories = [];
-    // Хүснэгт байхгүй бол алдаа өгөхгүйн тулд хоосон array буцаана
 }
 
 // --------------------------------------------------------------------------
@@ -32,16 +48,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $title = trim($_POST['title']);
     $category_id = intval($_POST['category_id']);
     
-    // Үнэ (Range)
+    // Үнэ
     $price_min = floatval($_POST['price_min']);
     $price_max = !empty($_POST['price_max']) ? floatval($_POST['price_max']) : null;
     
     // Хугацаа & Засвар
     $delivery_time = intval($_POST['delivery_time']);
-    $delivery_unit = $_POST['delivery_unit']; // hour, day, week, month
+    $delivery_unit = $_POST['delivery_unit']; 
     $revision_count = intval($_POST['revision_count']); 
     
-    // Тайлбар & Шаардлага
+    // Тайлбар
     $description = $_POST['description']; 
     $requirements = $_POST['requirements'];
     
@@ -54,10 +70,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $error = "Гарчиг, Ангилал, Үнэ болон Тайлбарыг заавал бөглөх шаардлагатай.";
     }
 
-    // Зургийн тоог шалгах (Макс 5)
+    // Зургийн тоог шалгах
     $image_count = 0;
     if (isset($_FILES['images']) && !empty($_FILES['images']['name'][0])) {
-        $image_count = count($_FILES['images']['name']);
+        // Хоосон файл ирсэн эсэхийг шалгах
+        if ($_FILES['images']['error'][0] !== UPLOAD_ERR_NO_FILE) {
+            $image_count = count($_FILES['images']['name']);
+        }
     }
     
     if ($image_count > 5) {
@@ -88,7 +107,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             
             $service_id = $pdo->lastInsertId();
 
-            // 2. FAQ (Түгээмэл асуулт) хадгалах
+            // 2. FAQ хадгалах
             if (!empty($faq_questions)) {
                 $faq_sql = "INSERT INTO service_faqs (service_id, question, answer) VALUES (?, ?, ?)";
                 $faq_stmt = $pdo->prepare($faq_sql);
@@ -102,91 +121,126 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 }
             }
 
-            // 3. Зураг хуулах & service_previews рүү хадгалах
-            // Re-organize $_FILES array
-            function reArrayFiles(&$file_post) {
-                $file_ary = array();
-                $file_count = count($file_post['name']);
-                $file_keys = array_keys($file_post);
-                for ($i=0; $i<$file_count; $i++) {
-                    foreach ($file_keys as $key) {
-                        $file_ary[$i][$key] = $file_post[$key][$i];
+            // 3. Зураг хуулах & service_previews
+            if ($image_count > 0) {
+                $rel_base_dir = 'uploads/service/';
+                $abs_base_dir = __DIR__ . '/' . $rel_base_dir;
+
+                // Үндсэн uploads хавтас байхгүй бол үүсгэх
+                if (!is_dir($abs_base_dir)) {
+                    if (!mkdir($abs_base_dir, 0755, true)) {
+                         error_log("Failed to create base directory: " . $abs_base_dir);
                     }
                 }
-                return $file_ary;
-            }
 
-            if ($image_count > 0) {
-                // Хадгалах зам: uploads/service/{user_id}/{service_id}/
-                $upload_base_dir = 'uploads/service/'; // Root directory-оос
-                $service_dir_path = $upload_base_dir . $user_id . '/' . $service_id . '/';
+                // Хэрэглэгчийн ID-аар хавтас үүсгэх
+                $service_dir_suffix = $user_id . '/' . $service_id . '/';
+                $target_dir_abs = $abs_base_dir . $service_dir_suffix;
+                $target_dir_rel = $rel_base_dir . $service_dir_suffix;
 
-                if (!is_dir($service_dir_path)) {
-                    mkdir($service_dir_path, 0777, true);
+                if (!is_dir($target_dir_abs)) {
+                    if (!mkdir($target_dir_abs, 0777, true)) {
+                        error_log("Failed to create directory: " . $target_dir_abs);
+                        throw new Exception("Зураг хадгалах хавтас үүсгэж чадсангүй. Админтай холбогдоно уу.");
+                    }
                 }
 
-                $allowed = ['jpg', 'jpeg', 'png', 'webp'];
+                // AVIF нэмсэн
+                $allowed = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif'];
                 $order_counter = 1;
-                $first_image_path = null;
+                $first_success_image = null; // Cover image-д зориулсан хувьсагч
 
                 $img_files = reArrayFiles($_FILES['images']);
 
-                // Файлуудыг давтах (Input дээрээс эрэмбэлэгдсэн дарааллаар ирнэ)
-                foreach ($img_files as $key => $file) {
+                foreach ($img_files as $file) {
                     if ($order_counter > 5) break;
 
                     $tmp_name = $file['tmp_name'];
                     $file_error = $file['error'];
                     $file_size = $file['size'];
                     $filename = $file['name'];
+                    
+                    if (empty($filename)) continue;
+
                     $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
 
-                    if ($file_error === 0 && in_array($ext, $allowed) && $file_size <= 5 * 1024 * 1024) { // Max 5MB
+                    // Validation check
+                    if ($file_error === 0 && in_array($ext, $allowed) && $file_size <= 10 * 1024 * 1024) { // 10MB limit
                         $new_filename = uniqid('img_', true) . '.' . $ext;
-                        $destination = $service_dir_path . $new_filename;
-                        
-                        // DB-д хадгалах зам (relative path)
-                        $db_path = $service_dir_path . $new_filename;
+                        $destination = $target_dir_abs . $new_filename;
+                        $db_path = $target_dir_rel . $new_filename;
 
                         if (move_uploaded_file($tmp_name, $destination)) {
                             // Insert into service_previews
                             $stmt_img = $pdo->prepare("INSERT INTO service_previews (service_id, preview_url, order_index) VALUES (?, ?, ?)");
                             $stmt_img->execute([$service_id, $db_path, $order_counter]);
 
-                            if ($order_counter === 1) {
-                                $first_image_path = $db_path;
+                            if ($first_success_image === null) {
+                                $first_success_image = $db_path;
                             }
+                            
                             $order_counter++;
+                        } else {
+                            error_log("Failed to move file to: " . $destination);
                         }
+                    } else {
+                        // Detailed Error Logging
+                        $error_msg = "File upload failed for '$filename'. ";
+                        if (!in_array($ext, $allowed)) {
+                            $error_msg .= "Invalid extension: '$ext'. Allowed: " . implode(', ', $allowed);
+                        } elseif ($file_size > 10 * 1024 * 1024) {
+                            $error_msg .= "File too large: $file_size bytes.";
+                        } elseif ($file_error !== 0) {
+                            $error_msg .= "PHP Upload Error Code: $file_error.";
+                        }
+                        error_log($error_msg);
                     }
                 }
 
-                // 4. Үндсэн services хүснэгтийн cover_image-ийг update хийх
-                if ($first_image_path) {
-                    try {
-                        $update_sql = "UPDATE services SET cover_image = ? WHERE id = ?";
-                        $stmt_update = $pdo->prepare($update_sql);
-                        $stmt_update->execute([$first_image_path, $service_id]);
-                    } catch (Exception $ex) {
-                        // cover_image багана байхгүй бол алдааг үл тооно
-                    }
+                // 4. Update cover_image
+                if ($first_success_image) {
+                    $update_sql = "UPDATE services SET cover_image = ? WHERE id = ?";
+                    $stmt_update = $pdo->prepare($update_sql);
+                    $stmt_update->execute([$first_success_image, $service_id]);
                 }
             }
 
             $pdo->commit();
+
+            // ------------------------------------------
+            // 5. АДМИН РУУ МЭЙЛ ИЛГЭЭХ (Шинэ хэсэг)
+            // ------------------------------------------
+            try {
+                // Хэрэглэгчийн нэрийг татаж авах
+                $user_sql = "SELECT username, email FROM users WHERE id = ?";
+                $user_stmt = $pdo->prepare($user_sql);
+                $user_stmt->execute([$user_id]);
+                $user_info = $user_stmt->fetch();
+                $providerName = $user_info['username'] ?? 'User ID: ' . $user_id;
+
+                // Brevo функц дуудах (api/brevo_email.php дотор байх ёстой)
+                if (function_exists('sendNewServiceNotification')) {
+                    sendNewServiceNotification('delgerzaya95@gmail.com', $title, $providerName, $service_id);
+                } else {
+                    error_log("Warning: sendNewServiceNotification function not found.");
+                }
+            } catch (Exception $mailError) {
+                // Мэйл илгээхэд алдаа гарсан ч процессыг зогсоохгүй
+                error_log("Mail notification failed: " . $mailError->getMessage());
+            }
             
-            // Redirect with success message
-            header("Location: my-services.php?success=created");
+            // Success redirect
+            header("Location: profile/my_services.php?success=created");
             exit;
 
-        } catch (PDOException $e) {
+        } catch (Exception $e) {
             $pdo->rollBack();
-            $error = "Баазад хадгалахад алдаа гарлаа: " . $e->getMessage();
+            $error = "Системийн алдаа: " . $e->getMessage();
+            error_log($e->getMessage());
         }
     }
 }
 
-// Хуудасны гарчиг тохируулах
 $page_title = "Үйлчилгээ нэмэх - Filezone.mn";
 include 'includes/header.php';
 ?>
@@ -194,7 +248,20 @@ include 'includes/header.php';
 <div class="flex flex-1 max-w-7xl mx-auto w-full">
     
     <!-- Sidebar Navigation -->
-    <?php include 'includes/sidebar.php' ?>
+    <aside class="hidden lg:block w-64 flex-shrink-0 py-6 pr-6 h-[calc(100vh-64px)] sticky top-16 overflow-y-auto no-scrollbar">
+        <div class="space-y-1 mb-6">
+            <h3 class="px-3 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Үндсэн</h3>
+            <a href="index.php" class="flex items-center gap-3 px-3 py-2 text-gray-600 hover:bg-gray-100 hover:text-gray-900 rounded-lg font-medium transition-colors">
+                <i class="fas fa-home w-5 text-center"></i> Нүүр хуудас
+            </a>
+            <a href="browse-files.php" class="flex items-center gap-3 px-3 py-2 text-gray-600 hover:bg-gray-100 hover:text-gray-900 rounded-lg font-medium transition-colors">
+                <i class="fas fa-folder-open w-5 text-center"></i> Файлууд
+            </a>
+            <a href="profile/dashboard.php" class="flex items-center gap-3 px-3 py-2 text-gray-600 hover:bg-gray-100 hover:text-gray-900 rounded-lg font-medium transition-colors">
+                <i class="fas fa-user w-5 text-center"></i> Профайл
+            </a>
+        </div>
+    </aside>
 
     <!-- Main Content -->
     <main class="flex-1 py-6 px-4 lg:px-0 min-w-0">
@@ -305,14 +372,14 @@ include 'includes/header.php';
                             
                             <div class="flex flex-col items-start gap-4">
                                 <!-- Hidden input for actual file submission -->
-                                <input type="file" name="images[]" id="images-storage" class="hidden" multiple>
+                                <input type="file" name="images[]" id="images-storage" class="hidden" multiple accept="image/*">
                                 
                                 <!-- Visible input for selecting files -->
                                 <input type="file" id="images-picker" accept="image/*" multiple class="hidden" onchange="handleServiceImageSelect(this)">
                                 
                                 <label for="images-picker" class="w-full h-32 bg-gray-50 rounded-xl border-2 border-dashed border-gray-300 flex flex-col items-center justify-center text-gray-400 cursor-pointer hover:bg-gray-100 transition">
                                     <i class="fas fa-cloud-upload-alt text-3xl mb-2"></i>
-                                    <p class="text-xs">Зураг сонгох (JPG, PNG)</p>
+                                    <p class="text-xs">Зураг сонгох (JPG, PNG, AVIF)</p>
                                     <p class="text-[10px] text-gray-400 mt-1">Чирж дарааллыг солих боломжтой</p>
                                 </label>
                                 
@@ -473,11 +540,20 @@ include 'includes/header.php';
   // --- Image Handling with Drag & Drop ---
   let serviceImages = []; // Array to store File objects
 
+  // Form Submit Event Handler - CRITICAL FIX
+  // Энэ хэсэг нь form submit хийх үед hidden input-г JS array-аар шинэчилж байгааг баталгаажуулна.
+  document.getElementById('serviceForm').addEventListener('submit', function(e) {
+      updateServiceInputFiles();
+      // Хэрэв зураг байхгүй бол сануулга өгч болно (optional)
+      if (serviceImages.length === 0) {
+          // alert("Зураг оруулна уу!"); // Хэрэв хүсвэл
+      }
+  });
+
   function handleServiceImageSelect(input) {
       const files = Array.from(input.files);
       if (serviceImages.length + files.length > 5) {
           alert('Та дээд тал нь 5 зураг сонгох боломжтой.');
-          // Clear input so same files can be re-selected if needed
           input.value = '';
           return;
       }
@@ -538,7 +614,10 @@ include 'includes/header.php';
           dataTransfer.items.add(file);
       });
       // Update the hidden input that actually gets submitted
-      document.getElementById('images-storage').files = dataTransfer.files;
+      const fileInput = document.getElementById('images-storage');
+      fileInput.files = dataTransfer.files;
+      
+      console.log("Files ready for upload:", fileInput.files.length); // Debug log
   }
 
   // Initialize SortableJS

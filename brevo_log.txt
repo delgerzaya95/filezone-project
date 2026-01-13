@@ -77,3 +77,20 @@ To: delgerzaya95@gmail.com
 Response: {"messageId":"<202601110952.90398972472@smtp-relay.mailin.fr>"}
 
 -----------------------------------
+PASSWORD RESET - DT: 2026-01-13 13:41:15
+To: giamia999@gmail.com
+Response: {"messageId":"<202601130541.26503584488@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+NEW SERVICE NOTIFICATION - DT: 2026-01-13 15:36:35
+To: delgerzaya95@gmail.com
+Service ID: 38
+Response: {"messageId":"<202601130736.50916110517@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+CONTACT FORM - DT: 2026-01-13 16:39:08
+To: delgerzaya95@gmail.com
+From: delgerzaya95@gmail.com
+Response: {"messageId":"<202601130839.96757700238@smtp-relay.mailin.fr>"}
+
+-----------------------------------

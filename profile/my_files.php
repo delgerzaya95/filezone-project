@@ -28,16 +28,15 @@ $user_data = $stmt->get_result()->fetch_assoc();
 
 $username = $user_data['username'] ?? 'User';
 $email = $user_data['email'] ?? '';
-$active_files_count = 0; // Sidebar-д хэрэгтэй бол тоолж болно
 
-// Avatar Logic
-$db_avatar = $user_data['avatar_url'];
+// Avatar Logic (Same as my_services.php)
+$db_avatar = $user_data['avatar_url'] ?? '';
 $avatar = "https://ui-avatars.com/api/?name=" . urlencode($username) . "&background=random&color=fff";
+
 if (!empty($db_avatar)) {
     if (strpos($db_avatar, 'http') === 0) {
         $avatar = $db_avatar;
     } else {
-        // DB path is usually 'uploads/...', so we need '../uploads/...'
         if (file_exists('../' . $db_avatar)) {
             $avatar = '../' . $db_avatar;
         }
@@ -47,6 +46,7 @@ if (!empty($db_avatar)) {
 // --- DATA FETCHING FOR FILES ---
 
 // 1. Uploaded by me (All files)
+// Join with categories to get category name if needed, here just basic info
 $sql_all_my_files = "SELECT f.*, 
     (SELECT preview_url FROM file_previews fp WHERE fp.file_id = f.id ORDER BY order_index ASC LIMIT 1) as preview_image 
     FROM files f WHERE f.user_id = ? ORDER BY f.upload_date DESC";
@@ -110,7 +110,7 @@ include 'header.php';
 
 <div class="flex flex-1 max-w-7xl mx-auto w-full">
     
-    <!-- Sidebar (Replicated for consistency) -->
+    <!-- Sidebar -->
     <?php include 'sidebar.php'; ?>
 
     <!-- Main Content -->
@@ -154,31 +154,47 @@ include 'header.php';
                             $cnt = 1;
                             while($file = $all_my_files_result->fetch_assoc()): 
                                 $has_preview = !empty($file['preview_image']);
-                                // Preview Image Logic
                                 $preview_src = $has_preview ? '../' . htmlspecialchars($file['preview_image']) : '';
                                 
-                                // File Detail URL -> file-details.php (Updated)
-                                $file_detail_url = '../file-details.php?id=' . $file['id'];
+                                // Modal Data JSON
+                                $fileDetails = htmlspecialchars(json_encode([
+                                    'title' => $file['title'],
+                                    'price' => $file['price'],
+                                    'status' => $file['status'],
+                                    'reject_reason' => $file['reject_reason'],
+                                    'preview_image' => $preview_src,
+                                    'file_type' => $file['file_type'],
+                                    'file_size' => $file['file_size'],
+                                    'views' => $file['view_count'],
+                                    'downloads' => $file['download_count'],
+                                    'upload_date' => $file['upload_date']
+                                ]), ENT_QUOTES, 'UTF-8');
+
+                                // Link Logic: If pending/rejected -> OPEN MODAL. If approved -> GO TO DETAILS
+                                $rowAction = ($file['status'] == 'approved') ? "window.location.href='../file-details.php?id={$file['id']}'" : "openFileModal($fileDetails, 'desc-{$file['id']}')";
+                                $cursorClass = 'cursor-pointer';
                             ?>
                             <tr class="bg-white hover:bg-gray-50 transition group">
                                 <td class="px-6 py-4 text-gray-400 text-xs"><?php echo $cnt++; ?></td>
                                 <td class="px-6 py-4">
-                                    <div class="flex items-center gap-3">
-                                        <!-- Image/Icon wrapped in Link -->
-                                        <a href="<?php echo $file_detail_url; ?>" class="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center overflow-hidden flex-shrink-0 border border-gray-200 hover:opacity-80 transition">
+                                    <div class="flex items-center gap-3 <?php echo $cursorClass; ?>" onclick="<?php echo $rowAction; ?>">
+                                        <div class="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center overflow-hidden flex-shrink-0 border border-gray-200 hover:opacity-80 transition">
                                             <?php if($has_preview): ?>
                                                 <img src="<?php echo $preview_src; ?>" class="w-full h-full object-cover">
                                             <?php else: ?>
                                                 <i class="<?php echo getFileIcon($file['file_type']); ?> text-lg"></i>
                                             <?php endif; ?>
-                                        </a>
+                                        </div>
                                         <div class="min-w-0">
-                                            <!-- Title wrapped in Link -->
-                                            <a href="<?php echo $file_detail_url; ?>" class="text-sm font-medium text-gray-900 truncate max-w-xs block hover:text-blue-600 transition">
+                                            <div class="text-sm font-medium text-gray-900 truncate max-w-xs block hover:text-blue-600 transition">
                                                 <?php echo htmlspecialchars($file['title']); ?>
-                                            </a>
+                                            </div>
                                             <p class="text-xs text-gray-500 uppercase"><?php echo htmlspecialchars($file['file_type']); ?> • <?php echo number_format($file['file_size'] / 1024, 0); ?> KB</p>
                                         </div>
+                                    </div>
+                                    <!-- Hidden Description -->
+                                    <div id="desc-<?php echo $file['id']; ?>" class="hidden">
+                                        <?php echo $file['description']; ?>
                                     </div>
                                 </td>
                                 <td class="px-6 py-4 font-medium text-gray-900">
@@ -201,8 +217,11 @@ include 'header.php';
                                 </td>
                                 <td class="px-6 py-4 text-right">
                                     <div class="flex items-center justify-end gap-2">
-                                        <!-- Actions (in profile/ folder) -->
-                                        <a href="<?php echo $file_detail_url; ?>" class="p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition" title="Харах"><i class="fas fa-external-link-alt"></i></a>
+                                        <!-- View Button: Always opens modal for quick preview -->
+                                        <button onclick="openFileModal(<?php echo $fileDetails; ?>, 'desc-<?php echo $file['id']; ?>')" class="p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition" title="Урьдчилан харах">
+                                            <i class="far fa-eye"></i>
+                                        </button>
+                                        
                                         <a href="edit_file.php?id=<?php echo $file['id']; ?>" class="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition" title="Засах"><i class="fas fa-edit"></i></a>
                                         <a href="delete_file.php?id=<?php echo $file['id']; ?>" class="p-2 text-red-600 hover:bg-red-50 rounded-lg transition" title="Устгах" onclick="return confirm('Та энэ файлыг устгахдаа итгэлтэй байна уу?');"><i class="fas fa-trash-alt"></i></a>
                                     </div>
@@ -232,12 +251,9 @@ include 'header.php';
                     <?php while($p_file = $purchased_files_result->fetch_assoc()): 
                         $has_preview = !empty($p_file['preview_image']);
                         $preview_src = $has_preview ? '../' . htmlspecialchars($p_file['preview_image']) : '';
-                        
-                        // File Detail URL -> file-details.php (Updated)
                         $p_file_url = '../file-details.php?id=' . $p_file['id'];
                     ?>
                     <div class="p-4 hover:bg-gray-50 transition flex flex-row gap-4 items-start">
-                        <!-- Clickable Image -->
                         <a href="<?php echo $p_file_url; ?>" class="w-20 h-24 rounded-lg bg-gray-100 flex-shrink-0 overflow-hidden border border-gray-200 relative group block">
                             <?php if($has_preview): ?>
                                 <img src="<?php echo $preview_src; ?>" class="w-full h-full object-cover group-hover:scale-110 transition duration-300">
@@ -279,6 +295,72 @@ include 'header.php';
     </main>
 </div>
 
+<!-- FILE PREVIEW MODAL -->
+<div id="filePreviewModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-70 backdrop-blur-sm p-4 transition-all duration-300">
+    <div class="bg-white w-full max-w-2xl mx-auto rounded-2xl shadow-2xl z-50 overflow-hidden transform scale-95 transition-transform duration-300 flex flex-col max-h-[90vh]" id="filePreviewContent">
+        <!-- Header -->
+        <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+            <h3 class="text-lg font-bold text-gray-900 flex items-center gap-2">
+                <i class="far fa-file-alt text-blue-600"></i> Файлыг урьдчилан харах
+            </h3>
+            <button onclick="closeFileModal()" class="w-8 h-8 rounded-full bg-white border border-gray-200 flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 transition">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        
+        <!-- Content -->
+        <div class="flex-1 overflow-y-auto p-6 custom-scrollbar">
+            <div class="flex flex-col md:flex-row gap-6">
+                <!-- Preview Image/Icon -->
+                <div class="w-full md:w-1/3 flex-shrink-0">
+                    <div class="rounded-xl overflow-hidden bg-gray-100 border border-gray-200 aspect-[3/4] flex items-center justify-center relative group">
+                        <img id="modalFileImage" src="" class="w-full h-full object-cover hidden">
+                        <div id="modalFileIcon" class="text-6xl text-gray-300 hidden">
+                            <i class="fas fa-file"></i>
+                        </div>
+                    </div>
+                    <div class="mt-4 text-center">
+                        <div class="text-2xl font-bold text-green-600" id="modalFilePrice"></div>
+                        <div id="modalFileStatus" class="mt-2"></div>
+                    </div>
+                </div>
+
+                <!-- Details -->
+                <div class="w-full md:w-2/3 space-y-4">
+                    <div>
+                        <h2 id="modalFileTitle" class="text-xl font-bold text-gray-900 leading-tight"></h2>
+                        <div class="flex items-center gap-3 mt-2 text-xs text-gray-500">
+                            <span class="bg-gray-100 px-2 py-1 rounded text-gray-700 font-bold uppercase" id="modalFileType"></span>
+                            <span id="modalFileSize"></span>
+                            <span>•</span>
+                            <span id="modalFileDate"></span>
+                        </div>
+                    </div>
+
+                    <div class="prose prose-sm max-w-none text-gray-600 bg-gray-50 p-4 rounded-lg border border-gray-100" id="modalFileDesc">
+                        <!-- Description content -->
+                    </div>
+
+                    <div class="flex gap-4 text-sm text-gray-500 border-t border-gray-100 pt-4">
+                        <div class="flex items-center gap-1"><i class="far fa-eye"></i> <span id="modalFileViews"></span> үзсэн</div>
+                        <div class="flex items-center gap-1"><i class="fas fa-download"></i> <span id="modalFileDownloads"></span> татсан</div>
+                    </div>
+
+                    <div id="modalFileRejection" class="hidden bg-red-50 border border-red-100 p-3 rounded-lg text-xs text-red-600">
+                        <strong class="block mb-1">Татгалзсан шалтгаан:</strong>
+                        <span id="modalFileRejectText"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Footer -->
+        <div class="px-6 py-4 border-t border-gray-100 bg-gray-50 flex justify-end">
+            <button onclick="closeFileModal()" class="bg-gray-900 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-gray-800 transition">Хаах</button>
+        </div>
+    </div>
+</div>
+
 <script>
 function switchFileTab(type) {
     document.querySelectorAll('.file-tab-content').forEach(el => {
@@ -297,6 +379,80 @@ function switchFileTab(type) {
     const activeBtn = document.getElementById('tab-btn-' + type);
     activeBtn.classList.add('active', 'border-b-2', 'border-blue-600', 'text-blue-600');
     activeBtn.classList.remove('border-transparent', 'text-gray-500');
+}
+
+// Modal Logic
+function openFileModal(data, descId) {
+    const descHtml = document.getElementById(descId).innerHTML;
+    
+    document.getElementById('modalFileTitle').textContent = data.title;
+    document.getElementById('modalFileDesc').innerHTML = descHtml;
+    
+    // Price
+    document.getElementById('modalFilePrice').textContent = (data.price > 0) ? new Intl.NumberFormat().format(data.price) + '₮' : 'Үнэгүй';
+    
+    // Meta
+    document.getElementById('modalFileType').textContent = data.file_type;
+    document.getElementById('modalFileSize').textContent = (data.file_size / 1024).toFixed(0) + ' KB';
+    document.getElementById('modalFileDate').textContent = data.upload_date.split(' ')[0];
+    document.getElementById('modalFileViews').textContent = data.views;
+    document.getElementById('modalFileDownloads').textContent = data.downloads;
+
+    // Image/Icon
+    const imgEl = document.getElementById('modalFileImage');
+    const iconEl = document.getElementById('modalFileIcon');
+    
+    if (data.preview_image) {
+        imgEl.src = data.preview_image;
+        imgEl.classList.remove('hidden');
+        iconEl.classList.add('hidden');
+    } else {
+        imgEl.classList.add('hidden');
+        iconEl.classList.remove('hidden');
+        // Simple icon mapping based on type
+        let iconClass = 'fa-file text-gray-400';
+        if(['jpg','png','jpeg'].includes(data.file_type)) iconClass = 'fa-file-image text-purple-500';
+        else if(['pdf'].includes(data.file_type)) iconClass = 'fa-file-pdf text-red-500';
+        else if(['doc','docx'].includes(data.file_type)) iconClass = 'fa-file-word text-blue-500';
+        
+        iconEl.innerHTML = `<i class="fas ${iconClass}"></i>`;
+    }
+
+    // Status Badge
+    const statusEl = document.getElementById('modalFileStatus');
+    let statusHtml = '';
+    if (data.status === 'approved') statusHtml = '<span class="px-2 py-1 text-xs font-bold uppercase bg-green-100 text-green-700 rounded-full">Зөвшөөрсөн</span>';
+    else if (data.status === 'rejected') statusHtml = '<span class="px-2 py-1 text-xs font-bold uppercase bg-red-100 text-red-700 rounded-full">Татгалзсан</span>';
+    else statusHtml = '<span class="px-2 py-1 text-xs font-bold uppercase bg-yellow-100 text-yellow-700 rounded-full">Хүлээгдэж буй</span>';
+    statusEl.innerHTML = statusHtml;
+
+    // Rejection Reason
+    const rejectBox = document.getElementById('modalFileRejection');
+    if (data.status === 'rejected' && data.reject_reason) {
+        rejectBox.classList.remove('hidden');
+        document.getElementById('modalFileRejectText').textContent = data.reject_reason;
+    } else {
+        rejectBox.classList.add('hidden');
+    }
+
+    // Show Modal
+    const modal = document.getElementById('filePreviewModal');
+    const content = document.getElementById('filePreviewContent');
+    modal.classList.remove('hidden');
+    setTimeout(() => {
+        content.classList.remove('scale-95');
+        content.classList.add('scale-100');
+    }, 10);
+}
+
+function closeFileModal() {
+    const modal = document.getElementById('filePreviewModal');
+    const content = document.getElementById('filePreviewContent');
+    content.classList.remove('scale-100');
+    content.classList.add('scale-95');
+    setTimeout(() => {
+        modal.classList.add('hidden');
+    }, 200);
 }
 </script>
 <?php include '../includes/footer.php'; ?>

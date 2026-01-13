@@ -7,21 +7,15 @@ if (session_status() === PHP_SESSION_NONE) {
 }
 
 // db.php-г олох зам (profile фолдероос нэг гарч үндсэн фолдер, дараа нь includes/db.php)
-// Анхаар: Таны db.php хаана байгаагаас хамаарч замыг тохируулна.
-// Хэрэв db.php нь 'includes/db.php' замд байгаа бол:
 require_once __DIR__ . '/../includes/db.php'; 
 
-// Баазтай холбогдох (Хэрэв db.php дотор холболт үүсээгүй бол)
+// Баазтай холбогдох
 if (!isset($conn) && isset($db_host)) {
     $conn = new mysqli($db_host, $db_user, $db_pass, $db_name);
     if ($conn->connect_error) {
-        // Чимээгүй алдаа эсвэл log бичих (Header-т алдаа харуулахгүй байх нь дээр)
+        // Чимээгүй алдаа
     }
 }
-// PDO ашиглаж байгаа бол $pdo хувьсагчийг шалгана (Таны өгсөн кодонд $pdo ашигласан байсан)
-// Хэрэв та mysqli ($conn) болон PDO ($pdo) хоёуланг нь ашигладаг бол доорх логик хэвээр байна.
-// Гэхдээ таны өгсөн user_dashboard.php жишээнд $conn (mysqli) ашигласан тул энд $conn ашиглая.
-// Хэрэв db.php дотор $pdo үүсдэг бол түүнийг ашиглана.
 
 // Кирилл үсэгтэй ажиллах тохиргоо
 if (function_exists('mb_internal_encoding')) {
@@ -52,7 +46,6 @@ if (!function_exists('getHeaderInitials')) {
         if (function_exists('mb_substr')) {
             return mb_strtoupper(mb_substr($name, 0, 2));
         }
-        // Fallback for non-multibyte environments
         return strtoupper(substr($name, 0, 2));
     }
 }
@@ -75,7 +68,6 @@ $notifications = [];
 $unreadCount = 0;
 
 if (isset($_SESSION['user_id'])) {
-    // Хэрэглэгчийн мэдээллийг баазаас шинэчилж авах (Session-д хуучин мэдээлэл байж магадгүй)
     if (isset($conn)) {
         $h_sql = "SELECT username, email, avatar_url FROM users WHERE id = ?";
         $h_stmt = $conn->prepare($h_sql);
@@ -93,7 +85,6 @@ if (isset($_SESSION['user_id'])) {
             ];
         }
     } else {
-        // Fallback to session if DB fails
         $loggedInUser = [
             'id' => $_SESSION['user_id'],
             'name' => $_SESSION['username'] ?? 'User',
@@ -108,12 +99,11 @@ if (isset($_SESSION['user_id'])) {
     // Avatar Path Correction for Profile Folder
     if (!empty($loggedInUser['avatar'])) {
         if (strpos($loggedInUser['avatar'], 'http') !== 0) {
-            // DB path: uploads/avatars/... -> Profile needs: ../uploads/avatars/...
             $loggedInUser['avatar'] = '../' . $loggedInUser['avatar'];
         }
     }
 
-    // Мэдэгдэл татах (Using mysqli since $conn is available)
+    // Мэдэгдэл татах
     if (isset($conn)) {
         $notif_sql = "SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 5";
         $notif_stmt = $conn->prepare($notif_sql);
@@ -140,31 +130,18 @@ if (isset($_SESSION['user_id'])) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?php echo isset($pageTitle) ? htmlspecialchars($pageTitle) : 'Filezone.mn - Дижитал файлын сан'; ?></title>
 
-    <!-- FAVICON (Path updated with ../ if needed, but data URI works everywhere) -->
     <link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImciIHgxPSIwJSIgeTE9IjAlIiB4Mj0iMTAwJSIgeTI9IjEwMCUiPjxzdG9wIG9mZnNldD0iMCUiIHN0b3AtY29sb3I9IiM0ZjQ2ZTUiLz48c3RvcCBvZmZzZXQ9IjEwMCUiIHN0b3AtY29sb3I9IiM3ZTIyY2UiLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgcng9IjI1IiBmaWxsPSJ1cmwoI2cpIi8+PHRleHQgeD0iNTAiIHk9IjcwIiBmb250LWZhbWlseT0ic2Fucy1zZXJpZiIgZm9udC13ZWlnaHQ9ImJvbGQiIGZvbnQtc2l6ZT0iNjAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZpbGw9IndoaXRlIj5GPC90ZXh0Pjwvc3ZnPg==" type="image/svg+xml">
-    
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- Font Awesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
-    <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    
-    <!-- Custom CSS (Path updated: ../assets/...) -->
     <link rel="stylesheet" href="../assets/css/style.css">
-    
-    <!-- Tailwind Config (Path updated: ../assets/...) -->
     <script src="../assets/js/tailwind-config.js"></script>
 
     <style>
-        /* Custom scrollbar for notification dropdown */
         .notif-scroll::-webkit-scrollbar { width: 6px; }
         .notif-scroll::-webkit-scrollbar-track { background: #f1f1f1; }
         .notif-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
         .notif-scroll::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-        /* Animation utility */
         .animate-fade-in-down { animation: fadeInDown 0.2s ease-out; }
         @keyframes fadeInDown {
             from { opacity: 0; transform: translateY(-10px); }
@@ -194,7 +171,6 @@ if (isset($_SESSION['user_id'])) {
                 
                 <!-- Left Side: Logo & Menu -->
                 <div class="flex items-center gap-8">
-                    <!-- Logo (Path updated: ../index.php) -->
                     <a href="../index.php" class="flex items-center gap-2 group">
                         <div class="w-9 h-9 bg-gradient-to-br from-brand-600 to-purple-700 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-lg shadow-brand-500/30 group-hover:scale-105 transition-transform duration-200">
                             F
@@ -202,21 +178,18 @@ if (isset($_SESSION['user_id'])) {
                         <span class="font-bold text-xl tracking-tight text-gray-900 group-hover:text-brand-600 transition-colors">Filezone</span>
                     </a>
                     
-                    <!-- Desktop Menu (Links go to root pages) -->
                     <div class="hidden md:flex gap-6">
                         <a href="../index.php" class="text-sm font-medium text-gray-600 hover:text-brand-600 transition-colors">Нүүр</a>
                         <a href="../services.php" class="text-sm font-medium text-gray-600 hover:text-brand-600 transition-colors">Үйлчилгээ</a>
-                        <a href="../files.php" class="text-sm font-medium text-gray-600 hover:text-brand-600 transition-colors">Файлууд</a>
+                        <a href="../browse-files.php" class="text-sm font-medium text-gray-600 hover:text-brand-600 transition-colors">Файлууд</a>
                     </div>
                 </div>
 
-                <!-- Desktop Search (Form + Button) -->
+                <!-- Desktop Search -->
                 <form action="../search.php" method="GET" class="hidden md:block w-full max-w-md relative mx-4 group">
                     <input type="text" name="q" placeholder="Хайх: Диплом, Гэрээ, Орчуулга..." 
                         value="<?php echo isset($_GET['q']) ? htmlspecialchars($_GET['q']) : ''; ?>"
                         class="w-full pl-4 pr-12 py-2 bg-gray-50 border border-gray-200 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all shadow-sm">
-                    
-                    <!-- Search Button -->
                     <button type="submit" class="absolute inset-y-0 right-0 px-4 text-gray-400 hover:text-brand-600 transition-colors rounded-r-full focus:outline-none group-focus-within:text-brand-500 bg-transparent border-l border-gray-200 h-full">
                         <i class="fas fa-search"></i>
                     </button>
@@ -225,13 +198,11 @@ if (isset($_SESSION['user_id'])) {
                 <!-- Right Side: Actions -->
                 <div class="flex items-center gap-3 sm:gap-4">
                     
-                    <!-- Add Service Button (Purple) -->
                     <a href="../add_service.php" class="hidden lg:flex items-center gap-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white px-4 py-2 rounded-full font-bold text-xs shadow-lg shadow-purple-500/30 hover:shadow-purple-500/50 transform hover:-translate-y-0.5 transition-all btn-shine whitespace-nowrap">
                         <i class="fas fa-briefcase"></i>
                         Үйлчилгээ
                     </a>
 
-                    <!-- Upload Button (Yellow/Orange) -->
                     <a href="../upload.php" class="hidden md:flex items-center gap-2 bg-gradient-to-r from-orange-500 to-red-500 text-white px-4 py-2 rounded-full font-bold text-xs shadow-lg shadow-orange-500/30 hover:shadow-orange-500/50 transform hover:-translate-y-0.5 transition-all btn-shine whitespace-nowrap">
                         <i class="fas fa-cloud-upload-alt"></i>
                         Файл оруулах
@@ -268,8 +239,15 @@ if (isset($_SESSION['user_id'])) {
                                                     if (isset($notif['type']) && $notif['type'] == 'success') $icon = 'fas fa-check-circle text-green-500';
                                                     if (isset($notif['type']) && $notif['type'] == 'warning') $icon = 'fas fa-exclamation-triangle text-yellow-500';
                                                     if (isset($notif['type']) && $notif['type'] == 'error') $icon = 'fas fa-times-circle text-red-500';
+                                                    
+                                                    // ЗАМЫН ЗАСВАР (LINK FIX): 
+                                                    // DB дотор линк нь "profile/dashboard.php" эсвэл "service-details.php" гэж байгаа.
+                                                    // Бид profile/ хавтас дотор байгаа тул эхлээд "../" залгах хэрэгтэй.
+                                                    // Хэрэв линк http-ээр эхэлсэн бол өөрчлөхгүй.
+                                                    $rawLink = $notif['link'] ?? '#';
+                                                    $fixedLink = (strpos($rawLink, 'http') === 0) ? $rawLink : '../' . $rawLink;
                                                 ?>
-                                                <a href="#" onclick="markAsRead(<?php echo $notif['id']; ?>, '<?php echo htmlspecialchars($notif['link'] ?? '#'); ?>')" class="block px-4 py-3 hover:bg-gray-50 transition border-b border-gray-50 last:border-0 <?php echo $isReadClass; ?>">
+                                                <a href="#" onclick="markAsRead(<?php echo $notif['id']; ?>, '<?php echo htmlspecialchars($fixedLink); ?>')" class="block px-4 py-3 hover:bg-gray-50 transition border-b border-gray-50 last:border-0 <?php echo $isReadClass; ?>">
                                                     <div class="flex gap-3">
                                                         <div class="mt-1 flex-shrink-0">
                                                             <i class="<?php echo $icon; ?>"></i>
@@ -323,7 +301,6 @@ if (isset($_SESSION['user_id'])) {
                                         <p class="text-sm font-bold text-gray-900 truncate"><?php echo htmlspecialchars($loggedInUser['email']); ?></p>
                                     </div>
                                     
-                                    <!-- Profile/Dashboard Links (Relative to profile/) -->
                                     <a href="dashboard.php" class="flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-brand-50 hover:text-brand-700 transition-colors">
                                         <i class="far fa-user w-4"></i> Хувийн хуудас
                                     </a>
@@ -351,7 +328,6 @@ if (isset($_SESSION['user_id'])) {
                                 </div>
                             </div>
                         </div>
-
                     <?php else: ?>
                         <!-- GUEST STATE -->
                         <a href="../login.php" class="text-sm font-medium text-gray-600 hover:text-brand-600 px-3 py-2 rounded-lg hover:bg-gray-50 transition-colors hidden sm:block">
@@ -364,7 +340,6 @@ if (isset($_SESSION['user_id'])) {
                         </a>
                     <?php endif; ?>
 
-                    <!-- Mobile Menu Button -->
                     <button class="md:hidden w-9 h-9 flex items-center justify-center text-gray-600 hover:bg-gray-100 rounded-lg ml-1" onclick="document.getElementById('mobileSearch').classList.toggle('hidden')">
                         <i class="fas fa-search text-lg"></i>
                     </button>
@@ -372,7 +347,6 @@ if (isset($_SESSION['user_id'])) {
             </div>
         </div>
         
-        <!-- Mobile Search (Visible only on small screens) -->
         <div id="mobileSearch" class="hidden md:hidden border-t border-gray-100 p-4 bg-white/50 backdrop-blur-sm">
              <form action="../search.php" method="GET" class="relative w-full">
                 <input type="text" name="q" class="w-full bg-gray-100 text-gray-900 text-sm rounded-lg pl-4 pr-10 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500/20" placeholder="Хайх...">
@@ -385,7 +359,6 @@ if (isset($_SESSION['user_id'])) {
 
     <!-- Notification Logic Script -->
     <script>
-        // Close dropdown when clicking outside
         document.addEventListener('click', function(event) {
             const notifMenu = document.getElementById('notifMenu');
             const notifDropdown = document.getElementById('notifDropdown');
@@ -394,9 +367,7 @@ if (isset($_SESSION['user_id'])) {
             }
         });
 
-        // Mark notification as read and redirect
         function markAsRead(id, link) {
-            // Send AJAX request to mark as read
             fetch('../api/mark_read.php', {
                 method: 'POST',
                 headers: {
@@ -404,11 +375,10 @@ if (isset($_SESSION['user_id'])) {
                 },
                 body: 'id=' + id
             }).then(() => {
-                // Redirect after marking as read
                 window.location.href = link;
             }).catch(err => {
                 console.error(err);
-                window.location.href = link; // Redirect anyway
+                window.location.href = link;
             });
         }
     </script>
