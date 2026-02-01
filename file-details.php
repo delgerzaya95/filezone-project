@@ -44,10 +44,8 @@ $stmt_prev = $pdo->prepare("SELECT preview_url FROM file_previews WHERE file_id 
 $stmt_prev->execute([$file_id]);
 $previews = $stmt_prev->fetchAll(PDO::FETCH_COLUMN);
 
-// If no previews, use a default placeholder
-if (empty($previews)) {
-    $previews[] = 'assets/images/file-placeholder.jpg'; 
-}
+// ЗАСВАР: Зурагтай эсэхийг шалгах хувьсагч
+$has_previews = !empty($previews);
 
 // 3. Increment View Count
 $stmt_view = $pdo->prepare("UPDATE files SET view_count = view_count + 1 WHERE id = ?");
@@ -114,6 +112,7 @@ function getFileIconClass($type) {
         case 'xls': case 'xlsx': return 'fa-file-excel text-green-500';
         case 'ppt': case 'pptx': return 'fa-file-powerpoint text-orange-500';
         case 'zip': case 'rar': return 'fa-file-archive text-yellow-500';
+        case 'link': return 'fa-link text-indigo-500';
         default: return 'fa-file text-gray-400';
     }
 }
@@ -193,32 +192,54 @@ include 'includes/header.php';
                     </div>
                 </div>
 
-                <!-- Preview Image Slider/Display -->
+                <!-- ZASVAR: Improved Preview Image Display -->
                 <div class="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm mb-8">
                     <div class="aspect-video bg-gray-100 relative group flex items-center justify-center overflow-hidden">
                         
-                        <?php if (count($previews) > 1): ?>
-                            <!-- Slider Controls -->
-                            <button onclick="prevSlide()" class="absolute left-2 top-1/2 -translate-y-1/2 bg-black/50 text-white w-8 h-8 rounded-full flex items-center justify-center hover:bg-black/70 z-10 opacity-0 group-hover:opacity-100 transition"><i class="fas fa-chevron-left"></i></button>
-                            <button onclick="nextSlide()" class="absolute right-2 top-1/2 -translate-y-1/2 bg-black/50 text-white w-8 h-8 rounded-full flex items-center justify-center hover:bg-black/70 z-10 opacity-0 group-hover:opacity-100 transition"><i class="fas fa-chevron-right"></i></button>
-                        <?php endif; ?>
+                        <?php if ($has_previews): ?>
+                            
+                            <?php if (count($previews) > 1): ?>
+                                <!-- Slider Controls -->
+                                <button onclick="prevSlide()" class="absolute left-2 top-1/2 -translate-y-1/2 bg-black/50 text-white w-8 h-8 rounded-full flex items-center justify-center hover:bg-black/70 z-10 opacity-0 group-hover:opacity-100 transition"><i class="fas fa-chevron-left"></i></button>
+                                <button onclick="nextSlide()" class="absolute right-2 top-1/2 -translate-y-1/2 bg-black/50 text-white w-8 h-8 rounded-full flex items-center justify-center hover:bg-black/70 z-10 opacity-0 group-hover:opacity-100 transition"><i class="fas fa-chevron-right"></i></button>
+                            <?php endif; ?>
 
-                        <div id="slider-container" class="w-full h-full relative">
-                            <?php foreach($previews as $idx => $url): ?>
-                                <img src="<?php echo htmlspecialchars($url); ?>" 
-                                     class="w-full h-full object-contain absolute inset-0 transition-opacity duration-300 <?php echo $idx === 0 ? 'opacity-100 relative' : 'opacity-0'; ?>" 
-                                     data-index="<?php echo $idx; ?>" 
-                                     alt="Preview <?php echo $idx+1; ?>">
-                            <?php endforeach; ?>
-                        </div>
+                            <div id="slider-container" class="w-full h-full relative">
+                                <?php foreach($previews as $idx => $url): ?>
+                                    <div class="absolute inset-0 w-full h-full transition-opacity duration-300 <?php echo $idx === 0 ? 'opacity-100 relative' : 'opacity-0'; ?>">
+                                        <!-- Image with Fallback -->
+                                        <img src="<?php echo htmlspecialchars($url); ?>" 
+                                             class="w-full h-full object-contain" 
+                                             data-index="<?php echo $idx; ?>" 
+                                             alt="Preview"
+                                             onerror="this.style.display='none'; this.parentElement.querySelector('.fallback-icon').classList.remove('hidden');">
+                                        
+                                        <!-- Fallback Icon (Hidden by default, shown on error) -->
+                                        <div class="fallback-icon hidden w-full h-full flex flex-col items-center justify-center bg-gray-50 text-gray-300">
+                                            <i class="fas <?php echo getFileIconClass($file['file_type']); ?> text-6xl opacity-50 mb-2"></i>
+                                            <span class="text-xs font-medium">Зураг ачаалсангүй</span>
+                                        </div>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+
+                        <?php else: ?>
+                            <!-- No Previews Available - Show Default Icon -->
+                            <div class="w-full h-full flex flex-col items-center justify-center bg-gray-50 text-gray-400">
+                                <div class="w-24 h-24 bg-white rounded-full shadow-sm flex items-center justify-center mb-3 border border-gray-100">
+                                    <i class="fas <?php echo getFileIconClass($file['file_type']); ?> text-5xl"></i>
+                                </div>
+                                <span class="text-sm font-medium text-gray-500">Урьдчилан харах зураггүй</span>
+                            </div>
+                        <?php endif; ?>
                     </div>
                     
                     <!-- Thumbnails (if multiple) -->
-                    <?php if (count($previews) > 1): ?>
+                    <?php if ($has_previews && count($previews) > 1): ?>
                     <div class="flex gap-2 p-2 overflow-x-auto bg-gray-50 border-t border-gray-200">
                         <?php foreach($previews as $idx => $url): ?>
                             <div onclick="goToSlide(<?php echo $idx; ?>)" class="w-16 h-12 rounded border border-gray-300 cursor-pointer overflow-hidden opacity-70 hover:opacity-100 transition <?php echo $idx === 0 ? 'ring-2 ring-brand-500 opacity-100' : ''; ?>" id="thumb-<?php echo $idx; ?>">
-                                <img src="<?php echo htmlspecialchars($url); ?>" class="w-full h-full object-cover">
+                                <img src="<?php echo htmlspecialchars($url); ?>" class="w-full h-full object-cover" onerror="this.src='assets/images/file-placeholder.jpg'; this.onerror=null;">
                             </div>
                         <?php endforeach; ?>
                     </div>
@@ -306,12 +327,23 @@ include 'includes/header.php';
                         <?php endif; ?>
 
                         <?php if($has_purchased): ?>
-                            <a href="download.php?file_id=<?php echo $file_id; ?>" class="w-full bg-green-600 text-white font-bold py-3 rounded-xl shadow-lg shadow-green-500/30 hover:bg-green-700 transition flex items-center justify-center gap-2 mb-3">
-                                <i class="fas fa-download"></i> Шууд татах
-                            </a>
-                            <p class="text-xs text-center text-green-600 mb-3">
-                                <i class="fas fa-check-circle mr-1"></i> Та энэ файлыг эзэмшиж байна.
-                            </p>
+                            <?php if ($file['is_external'] == 1 && !empty($file['external_link'])): ?>
+                                <!-- EXTERNAL LINK BUTTON -->
+                                <a href="<?php echo htmlspecialchars($file['external_link']); ?>" target="_blank" class="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl shadow-lg shadow-indigo-500/30 hover:bg-indigo-700 transition flex items-center justify-center gap-2 mb-3">
+                                    <i class="fas fa-external-link-alt"></i> Холбоосоор орох
+                                </a>
+                                <p class="text-xs text-center text-indigo-600 mb-3">
+                                    <i class="fas fa-info-circle mr-1"></i> Энэ файл гадаад холбоос дээр байрлаж байна.
+                                </p>
+                            <?php else: ?>
+                                <!-- DIRECT DOWNLOAD BUTTON (Fixed) -->
+                                <a href="download.php?file_id=<?php echo $file_id; ?>" class="w-full bg-green-600 text-white font-bold py-3 rounded-xl shadow-lg shadow-green-500/30 hover:bg-green-700 transition flex items-center justify-center gap-2 mb-3">
+                                    <i class="fas fa-download"></i> Шууд татах
+                                </a>
+                                <p class="text-xs text-center text-green-600 mb-3">
+                                    <i class="fas fa-check-circle mr-1"></i> Та энэ файлыг эзэмшиж байна.
+                                </p>
+                            <?php endif; ?>
                         <?php else: ?>
                             <?php if($current_user_id): ?>
                                 <a href="payment.php?type=file&id=<?php echo $file_id; ?>" class="w-full bg-brand-600 text-white font-bold py-3 rounded-xl shadow-lg shadow-brand-500/30 hover:bg-brand-700 transition btn-shine flex items-center justify-center gap-2 mb-3">
@@ -324,11 +356,11 @@ include 'includes/header.php';
                             <?php endif; ?>
                             
                             <p class="text-xs text-center text-gray-500 mb-3">
-                                <i class="fas fa-lock text-gray-400 mr-1"></i> Төлбөр төлсний дараа шууд татагдана.
+                                <i class="fas fa-lock text-gray-400 mr-1"></i> Төлбөр төлсний дараа шууд <?php echo ($file['is_external'] == 1) ? 'нээгдэнэ' : 'татагдана'; ?>.
                             </p>
                         <?php endif; ?>
 
-                        <!-- SAVE BUTTON (UPDATED) -->
+                        <!-- SAVE BUTTON -->
                         <button id="saveBtn" onclick="toggleSaveFile(<?php echo $file_id; ?>)" 
                                 class="w-full py-2.5 bg-white border border-gray-200 text-gray-700 rounded-xl font-semibold hover:bg-gray-50 transition-colors flex items-center justify-center gap-2 mb-6">
                             <i class="<?php echo $is_saved ? 'fas' : 'far'; ?> fa-heart <?php echo $is_saved ? 'text-red-500' : ''; ?>"></i> 
@@ -340,17 +372,22 @@ include 'includes/header.php';
                             <div class="bg-gray-50 p-3 rounded-lg border border-gray-100 text-center">
                                 <div class="text-gray-400 text-xs mb-1">Файлын төрөл</div>
                                 <div class="font-bold text-gray-800 flex items-center justify-center gap-1 uppercase">
-                                    <i class="fas <?php echo getFileIconClass($file['file_type']); ?>"></i> <?php echo htmlspecialchars($file['file_type']); ?>
+                                    <i class="fas <?php echo getFileIconClass($file['file_type']); ?>"></i> 
+                                    <?php echo ($file['is_external'] == 1) ? 'LINK' : htmlspecialchars($file['file_type']); ?>
                                 </div>
                             </div>
                             <div class="bg-gray-50 p-3 rounded-lg border border-gray-100 text-center">
                                 <div class="text-gray-400 text-xs mb-1">Хэмжээ</div>
                                 <div class="font-bold text-gray-800">
                                     <?php 
-                                        $size = $file['file_size'];
-                                        if($size < 1024) echo $size . " B";
-                                        elseif($size < 1048576) echo round($size/1024, 1) . " KB";
-                                        else echo round($size/1048576, 1) . " MB";
+                                        if ($file['is_external'] == 1) {
+                                            echo '<span class="text-xs">External</span>';
+                                        } else {
+                                            $size = $file['file_size'];
+                                            if($size < 1024) echo $size . " B";
+                                            elseif($size < 1048576) echo round($size/1024, 1) . " KB";
+                                            else echo round($size/1048576, 1) . " MB";
+                                        }
                                     ?>
                                 </div>
                             </div>
@@ -439,24 +476,32 @@ include 'includes/header.php';
     const thumbs = document.querySelectorAll('[id^="thumb-"]');
 
     function showSlide(n) {
-        if(slides.length === 0) return;
+        // Updated selector to find ONLY valid images, not fallback divs
+        const container = document.getElementById('slider-container');
+        if(!container) return;
         
-        slides[currentSlide].classList.remove('opacity-100', 'relative');
-        slides[currentSlide].classList.add('opacity-0', 'absolute');
+        // Find direct children divs that are slider items
+        const items = container.children; 
+        if(items.length === 0) return;
         
-        // Remove active class from previous thumb
-        if(thumbs.length > 0) {
+        // Hide current
+        items[currentSlide].classList.remove('opacity-100', 'relative');
+        items[currentSlide].classList.add('opacity-0', 'absolute');
+        
+        // Remove active thumb
+        if(thumbs.length > 0 && thumbs[currentSlide]) {
             thumbs[currentSlide].classList.remove('ring-2', 'ring-brand-500', 'opacity-100');
             thumbs[currentSlide].classList.add('opacity-70');
         }
 
-        currentSlide = (n + slides.length) % slides.length;
+        currentSlide = (n + items.length) % items.length;
 
-        slides[currentSlide].classList.remove('opacity-0', 'absolute');
-        slides[currentSlide].classList.add('opacity-100', 'relative');
+        // Show new
+        items[currentSlide].classList.remove('opacity-0', 'absolute');
+        items[currentSlide].classList.add('opacity-100', 'relative');
 
-        // Add active class to new thumb
-        if(thumbs.length > 0) {
+        // Active thumb
+        if(thumbs.length > 0 && thumbs[currentSlide]) {
             thumbs[currentSlide].classList.remove('opacity-70');
             thumbs[currentSlide].classList.add('ring-2', 'ring-brand-500', 'opacity-100');
         }

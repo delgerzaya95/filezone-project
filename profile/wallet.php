@@ -352,8 +352,6 @@ include 'header.php';
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Шилжүүлэх хэлбэр</label>
                                 <select name="method" class="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white">
                                     <option value="bank">Банкны данс</option>
-                                    <option value="socialpay">SocialPay</option>
-                                    <option value="qpay">QPay</option>
                                 </select>
                             </div>
 

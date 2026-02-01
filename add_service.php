@@ -1,5 +1,5 @@
 <?php
-// add_service.php (Root directory) - Final Version with Email Notification, AVIF support & JS Fixes
+// add_service.php (Root directory) - Final Version with Profile Check & Email Notification
 
 // Session эхлүүлэх
 if (session_status() === PHP_SESSION_NONE) {
@@ -19,6 +19,45 @@ if (!isset($_SESSION['user_id'])) {
 $user_id = $_SESSION['user_id'];
 $message = '';
 $error = '';
+
+// --------------------------------------------------------------------------
+// 1. ХЭРЭГЛЭГЧИЙН МЭДЭЭЛЛИЙГ ШАЛГАХ (Profile Check)
+// --------------------------------------------------------------------------
+$stmt_user = $pdo->prepare("SELECT full_name, phone, location FROM users WHERE id = ?");
+$stmt_user->execute([$user_id]);
+$current_user = $stmt_user->fetch(PDO::FETCH_ASSOC);
+
+// Мэдээлэл дутуу эсэхийг шалгах (Нэр эсвэл Утас байхгүй бол дутуу гэж үзнэ)
+$is_profile_incomplete = empty($current_user['full_name']) || empty($current_user['phone']);
+
+// --------------------------------------------------------------------------
+// 2. ХЭРЭГЛЭГЧИЙН МЭДЭЭЛЭЛ ШИНЭЧЛЭХ (Handle Profile Update)
+// --------------------------------------------------------------------------
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] == 'update_profile') {
+    $new_fullname = trim($_POST['full_name']);
+    $new_phone = trim($_POST['phone']);
+    $new_location = trim($_POST['location']); // Хаяг (Optional)
+
+    if (empty($new_fullname) || empty($new_phone)) {
+        $error = "Та жинхэнэ нэр болон утасны дугаараа заавал оруулах шаардлагатай.";
+    } else {
+        try {
+            $update_sql = "UPDATE users SET full_name = ?, phone = ?, location = ? WHERE id = ?";
+            $stmt_upd = $pdo->prepare($update_sql);
+            $stmt_upd->execute([$new_fullname, $new_phone, $new_location, $user_id]);
+            
+            // Амжилттай болсон бол хуудсыг дахин ачаална (Ингэснээр үйлчилгээ нэмэх хэсэг нээгдэнэ)
+            header("Location: add_service.php?profile_updated=1");
+            exit;
+        } catch (PDOException $e) {
+            $error = "Мэдээлэл хадгалахад алдаа гарлаа: " . $e->getMessage();
+        }
+    }
+}
+
+// --------------------------------------------------------------------------
+// 3. ҮЙЛЧИЛГЭЭ НЭМЭХ HANDLER (Зөвхөн мэдээлэл бүрэн үед ажиллана)
+// --------------------------------------------------------------------------
 
 // Helper function to re-array $_FILES
 function reArrayFiles(&$file_post) {
@@ -40,10 +79,7 @@ try {
     $categories = [];
 }
 
-// --------------------------------------------------------------------------
-// FORM SUBMISSION HANDLER
-// --------------------------------------------------------------------------
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['action']) && !$is_profile_incomplete) {
     // 1. Үндсэн мэдээлэл авах
     $title = trim($_POST['title']);
     $category_id = intval($_POST['category_id']);
@@ -279,183 +315,250 @@ include 'includes/header.php';
             </div>
         <?php endif; ?>
 
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            
-            <!-- Left Column: Service Form -->
-            <div class="lg:col-span-2 space-y-6">
-                
-                <div class="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
-                    <h3 class="font-bold text-gray-900 mb-6 border-b border-gray-100 pb-4">Үйлчилгээний мэдээлэл</h3>
-                    
-                    <form method="POST" action="add_service.php" enctype="multipart/form-data" class="space-y-6" id="serviceForm">
-                        
-                        <!-- Title -->
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1.5">Үйлчилгээний гарчиг <span class="text-red-500">*</span></label>
-                            <input type="text" name="title" required class="w-full border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none transition" placeholder="Жишээ: Би танд мэргэжлийн түвшинд лого бүтээж өгнө">
-                            <p class="text-xs text-gray-400 mt-1">Товч бөгөөд тодорхой байх хэрэгтэй. "Би ... хийж өгнө" гэсэн хэлбэрээр бичвэл зүгээр.</p>
-                        </div>
+        <?php if (isset($_GET['profile_updated'])): ?>
+            <div class="mb-6 bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded relative" role="alert">
+                <strong class="font-bold">Амжилттай!</strong>
+                <span class="block sm:inline">Таны мэдээлэл шинэчлэгдлээ. Одоо үйлчилгээгээ нэмнэ үү.</span>
+            </div>
+        <?php endif; ?>
 
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <!-- Category -->
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1.5">Ангилал <span class="text-red-500">*</span></label>
-                                <select name="category_id" required class="w-full border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none bg-white">
-                                    <option value="">Сонгоно уу...</option>
-                                    <?php foreach($categories as $cat): ?>
-                                        <option value="<?php echo $cat['id']; ?>"><?php echo htmlspecialchars($cat['name']); ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-                            <!-- Delivery Time -->
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1.5">Гүйцэтгэх хугацаа <span class="text-red-500">*</span></label>
-                                <div class="flex gap-2">
-                                    <input type="number" name="delivery_time" required min="1" value="1" class="w-1/3 border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none">
-                                    <select name="delivery_unit" class="w-2/3 border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none bg-white">
-                                        <option value="hour">Цаг</option>
-                                        <option value="day" selected>Хоног</option>
-                                        <option value="week">Долоо хоног</option>
-                                        <option value="month">Сар</option>
-                                    </select>
-                                </div>
-                            </div>
+        <!-- LOGIC: CHECK IF PROFILE IS COMPLETE -->
+        <?php if ($is_profile_incomplete): ?>
+            <!-- ======================================================= -->
+            <!-- PROFILE COMPLETION FORM (Shown if info is missing)      -->
+            <!-- ======================================================= -->
+            <div class="max-w-2xl mx-auto">
+                <div class="bg-white border-l-4 border-yellow-400 shadow-md rounded-r-xl p-6 md:p-8">
+                    <div class="flex items-start mb-6">
+                        <div class="flex-shrink-0">
+                            <span class="inline-flex items-center justify-center h-12 w-12 rounded-full bg-yellow-100 text-yellow-600">
+                                <i class="fas fa-user-shield text-xl"></i>
+                            </span>
                         </div>
+                        <div class="ml-4">
+                            <h3 class="text-lg font-bold text-gray-900">Мэдээллээ гүйцээнэ үү</h3>
+                            <p class="text-sm text-gray-600 mt-1">
+                                Үйлчилгээ нийтлэхийн тулд та өөрийн жинхэнэ нэр болон холбоо барих дугаараа оруулах шаардлагатай. Энэ нь захиалагч нарт итгэл төрүүлэхэд чухал юм.
+                            </p>
+                        </div>
+                    </div>
 
-                        <!-- Price -->
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1.5">Үнэ (MNT) <span class="text-red-500">*</span></label>
-                                <div class="relative">
-                                    <input type="number" name="price_min" required min="5000" class="w-full border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none transition" placeholder="30000">
-                                    <div class="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-                                        <span class="text-gray-500 text-xs">₮</span>
-                                    </div>
-                                </div>
-                                <p class="text-xs text-gray-500 mt-1">Хамгийн доод үнэ: 5,000₮</p>
-                            </div>
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1.5">Дээд үнэ (Сонголтоор)</label>
-                                <div class="relative">
-                                    <input type="number" name="price_max" min="5000" class="w-full border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none transition" placeholder="50000">
-                                    <div class="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-                                        <span class="text-gray-500 text-xs">₮</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
+                    <form method="POST" action="add_service.php" class="space-y-5">
+                        <input type="hidden" name="action" value="update_profile">
                         
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1.5">Засвар хийх тоо (Revisions)</label>
-                            <input type="number" name="revision_count" min="0" value="0" class="w-full border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none transition" placeholder="0 = Засваргүй">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Овог Нэр (Жинхэнэ нэр) <span class="text-red-500">*</span></label>
+                            <input type="text" name="full_name" required value="<?php echo htmlspecialchars($current_user['full_name'] ?? ''); ?>" 
+                                   class="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400 outline-none" 
+                                   placeholder="Жишээ: Бат-Эрдэнэ Болд">
                         </div>
 
-                        <!-- Description -->
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1.5">Дэлгэрэнгүй тайлбар <span class="text-red-500">*</span></label>
-                            <textarea name="description" id="description" rows="6" class="w-full border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none transition"></textarea>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Утасны дугаар <span class="text-red-500">*</span></label>
+                            <input type="text" name="phone" required value="<?php echo htmlspecialchars($current_user['phone'] ?? ''); ?>" 
+                                   class="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400 outline-none" 
+                                   placeholder="Жишээ: 99112233">
+                            <p class="text-xs text-gray-500 mt-1">Бид таны дугаарыг бусдад харагдуулахгүй, зөвхөн админ холбогдох зорилгоор ашиглана.</p>
                         </div>
 
-                        <!-- Requirements -->
-                        <div class="bg-blue-50 p-4 rounded-lg border border-blue-100">
-                            <label class="block text-sm font-bold text-blue-800 mb-1.5">Захиалагчаас шаардагдах зүйлс</label>
-                            <p class="text-xs text-blue-600 mb-2">Ажлыг эхлүүлэхийн тулд танд захиалагчаас юу хэрэгтэй вэ? (Жишээ нь: Компанийн нэр, өнгөний сонголт, текст г.м)</p>
-                            <textarea name="requirements" rows="3" class="w-full border border-blue-200 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition" placeholder="Надад дараах мэдээллүүдийг илгээнэ үү..."></textarea>
-                        </div>
-
-                        <!-- Images Upload with Drag & Drop -->
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1.5">
-                                Зураг (Дээд тал нь 5 зураг) <span class="text-red-500">*</span>
-                                <span class="text-xs text-purple-600 font-normal ml-2 bg-purple-50 px-2 py-0.5 rounded border border-purple-100">Зөөж байрлуулах боломжтой</span>
-                            </label>
-                            
-                            <div class="flex flex-col items-start gap-4">
-                                <!-- Hidden input for actual file submission -->
-                                <input type="file" name="images[]" id="images-storage" class="hidden" multiple accept="image/*">
-                                
-                                <!-- Visible input for selecting files -->
-                                <input type="file" id="images-picker" accept="image/*" multiple class="hidden" onchange="handleServiceImageSelect(this)">
-                                
-                                <label for="images-picker" class="w-full h-32 bg-gray-50 rounded-xl border-2 border-dashed border-gray-300 flex flex-col items-center justify-center text-gray-400 cursor-pointer hover:bg-gray-100 transition">
-                                    <i class="fas fa-cloud-upload-alt text-3xl mb-2"></i>
-                                    <p class="text-xs">Зураг сонгох (JPG, PNG, AVIF)</p>
-                                    <p class="text-[10px] text-gray-400 mt-1">Чирж дарааллыг солих боломжтой</p>
-                                </label>
-                                
-                                <!-- Preview Container -->
-                                <div id="image-preview-container" class="grid grid-cols-2 md:grid-cols-5 gap-3 w-full">
-                                    <!-- JS will fill this -->
-                                </div>
-                            </div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Хаяг байршил (Сонголтоор)</label>
+                            <input type="text" name="location" value="<?php echo htmlspecialchars($current_user['location'] ?? ''); ?>" 
+                                   class="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400 outline-none" 
+                                   placeholder="Жишээ: Улаанбаатар, Сүхбаатар дүүрэг">
                         </div>
 
-                        <hr class="border-gray-100">
-
-                        <!-- FAQ Section -->
-                        <div>
-                            <div class="flex justify-between items-center mb-3">
-                                <label class="block text-sm font-medium text-gray-700">Түгээмэл асуулт хариулт (FAQ)</label>
-                                <button type="button" onclick="addFaqRow()" class="text-xs text-purple-600 font-bold hover:text-purple-800">+ Асуулт нэмэх</button>
-                            </div>
-                            <div id="faq-container" class="space-y-3">
-                                <!-- Dynamic Rows -->
-                            </div>
-                        </div>
-
-                        <hr class="border-gray-100">
-
-                        <!-- Terms -->
-                        <div class="flex items-start bg-gray-50 p-4 rounded-lg border border-gray-200">
-                            <div class="flex items-center h-5">
-                                <input id="terms" type="checkbox" required disabled class="w-4 h-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500 disabled:opacity-50 disabled:cursor-not-allowed">
-                            </div>
-                            <div class="ml-3 text-sm">
-                                <label for="terms" class="font-medium text-gray-700">Үйлчилгээний нөхцөл</label>
-                                <p class="text-gray-500 text-xs">
-                                    Би <a href="#" onclick="openTermsModal(event)" class="text-purple-600 hover:text-purple-800 font-bold underline decoration-purple-300 underline-offset-2">Үйлчилгээний гэрээ</a>-тэй танилцаж, бүрэн хүлээн зөвшөөрч байна.
-                                    <span class="block text-[10px] text-red-500 mt-1">* Та гэрээтэй танилцсаны дараа зөвшөөрөх боломжтой.</span>
-                                </p>
-                            </div>
-                        </div>
-
-                        <!-- Buttons -->
-                        <div class="flex gap-4 pt-2">
-                            <button type="submit" class="flex-1 bg-purple-600 text-white font-bold py-3 rounded-xl shadow-lg shadow-purple-500/30 hover:bg-purple-700 hover:-translate-y-0.5 transition-all">
-                                Үйлчилгээ нийтлэх
-                            </button>
-                            <button type="button" onclick="history.back()" class="px-6 py-3 border border-gray-300 text-gray-600 font-bold rounded-xl hover:bg-gray-50 transition">
-                                Болих
+                        <div class="pt-2">
+                            <button type="submit" class="w-full bg-yellow-500 text-white font-bold py-3 rounded-xl shadow-lg shadow-yellow-500/30 hover:bg-yellow-600 transition transform hover:-translate-y-0.5">
+                                Хадгалах & Үргэлжлүүлэх
                             </button>
                         </div>
                     </form>
                 </div>
             </div>
 
-            <!-- Right Column: Tips -->
-            <div class="lg:col-span-1">
-                <div class="bg-purple-50 border border-purple-100 rounded-2xl p-6 sticky top-24">
-                    <h3 class="font-bold text-purple-900 mb-4 flex items-center gap-2">
-                        <i class="fas fa-star"></i> Амжилттай зарах зөвлөмж
-                    </h3>
-                    <ul class="space-y-4 text-sm text-purple-800">
-                        <li class="flex gap-3">
-                            <span class="w-6 h-6 bg-purple-200 text-purple-700 rounded-full flex items-center justify-center flex-shrink-0 font-bold text-xs">1</span>
-                            <span><strong>Гарчиг:</strong> Товч бөгөөд тодорхой байх. Үйлчлүүлэгч юу авах вэ гэдгээ шууд ойлгох ёстой.</span>
-                        </li>
-                        <li class="flex gap-3">
-                            <span class="w-6 h-6 bg-purple-200 text-purple-700 rounded-full flex items-center justify-center flex-shrink-0 font-bold text-xs">2</span>
-                            <span><strong>Зураг:</strong> Чанартай, анхаарал татахуйц зураг ашиглах нь борлуулалтыг 30% нэмэгдүүлдэг.</span>
-                        </li>
-                        <li class="flex gap-3">
-                            <span class="w-6 h-6 bg-purple-200 text-purple-700 rounded-full flex items-center justify-center flex-shrink-0 font-bold text-xs">3</span>
-                            <span><strong>Үнэ:</strong> Зах зээлийн ханшийг судалж, өрсөлдөхүйц үнэ тавих.</span>
-                        </li>
-                    </ul>
-                </div>
-            </div>
+        <?php else: ?>
+            <!-- ======================================================= -->
+            <!-- ADD SERVICE FORM (Shown only if profile is complete)    -->
+            <!-- ======================================================= -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                
+                <!-- Left Column: Service Form -->
+                <div class="lg:col-span-2 space-y-6">
+                    
+                    <div class="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
+                        <h3 class="font-bold text-gray-900 mb-6 border-b border-gray-100 pb-4">Үйлчилгээний мэдээлэл</h3>
+                        
+                        <form method="POST" action="add_service.php" enctype="multipart/form-data" class="space-y-6" id="serviceForm">
+                            
+                            <!-- Title -->
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1.5">Үйлчилгээний гарчиг <span class="text-red-500">*</span></label>
+                                <input type="text" name="title" required class="w-full border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none transition" placeholder="Жишээ: Би танд мэргэжлийн түвшинд лого бүтээж өгнө">
+                                <p class="text-xs text-gray-400 mt-1">Товч бөгөөд тодорхой байх хэрэгтэй. "Би ... хийж өгнө" гэсэн хэлбэрээр бичвэл зүгээр.</p>
+                            </div>
 
-        </div>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <!-- Category -->
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1.5">Ангилал <span class="text-red-500">*</span></label>
+                                    <select name="category_id" required class="w-full border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none bg-white">
+                                        <option value="">Сонгоно уу...</option>
+                                        <?php foreach($categories as $cat): ?>
+                                            <option value="<?php echo $cat['id']; ?>"><?php echo htmlspecialchars($cat['name']); ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                                <!-- Delivery Time -->
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1.5">Гүйцэтгэх хугацаа <span class="text-red-500">*</span></label>
+                                    <div class="flex gap-2">
+                                        <input type="number" name="delivery_time" required min="1" value="1" class="w-1/3 border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none">
+                                        <select name="delivery_unit" class="w-2/3 border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none bg-white">
+                                            <option value="hour">Цаг</option>
+                                            <option value="day" selected>Хоног</option>
+                                            <option value="week">Долоо хоног</option>
+                                            <option value="month">Сар</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Price -->
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1.5">Үнэ (MNT) <span class="text-red-500">*</span></label>
+                                    <div class="relative">
+                                        <input type="number" name="price_min" required min="5000" class="w-full border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none transition" placeholder="30000">
+                                        <div class="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                                            <span class="text-gray-500 text-xs">₮</span>
+                                        </div>
+                                    </div>
+                                    <p class="text-xs text-gray-500 mt-1">Хамгийн доод үнэ: 5,000₮</p>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1.5">Дээд үнэ (Сонголтоор)</label>
+                                    <div class="relative">
+                                        <input type="number" name="price_max" min="5000" class="w-full border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none transition" placeholder="50000">
+                                        <div class="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                                            <span class="text-gray-500 text-xs">₮</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1.5">Засвар хийх тоо (Revisions)</label>
+                                <input type="number" name="revision_count" min="0" value="0" class="w-full border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none transition" placeholder="0 = Засваргүй">
+                            </div>
+
+                            <!-- Description -->
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1.5">Дэлгэрэнгүй тайлбар <span class="text-red-500">*</span></label>
+                                <textarea name="description" id="description" rows="6" class="w-full border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none transition"></textarea>
+                            </div>
+
+                            <!-- Requirements -->
+                            <div class="bg-blue-50 p-4 rounded-lg border border-blue-100">
+                                <label class="block text-sm font-bold text-blue-800 mb-1.5">Захиалагчаас шаардагдах зүйлс</label>
+                                <p class="text-xs text-blue-600 mb-2">Ажлыг эхлүүлэхийн тулд танд захиалагчаас юу хэрэгтэй вэ? (Жишээ нь: Компанийн нэр, өнгөний сонголт, текст г.м)</p>
+                                <textarea name="requirements" rows="3" class="w-full border border-blue-200 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition" placeholder="Надад дараах мэдээллүүдийг илгээнэ үү..."></textarea>
+                            </div>
+
+                            <!-- Images Upload with Drag & Drop -->
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1.5">
+                                    Зураг (Дээд тал нь 5 зураг) <span class="text-red-500">*</span>
+                                    <span class="text-xs text-purple-600 font-normal ml-2 bg-purple-50 px-2 py-0.5 rounded border border-purple-100">Зөөж байрлуулах боломжтой</span>
+                                </label>
+                                
+                                <div class="flex flex-col items-start gap-4">
+                                    <!-- Hidden input for actual file submission -->
+                                    <input type="file" name="images[]" id="images-storage" class="hidden" multiple accept="image/*">
+                                    
+                                    <!-- Visible input for selecting files -->
+                                    <input type="file" id="images-picker" accept="image/*" multiple class="hidden" onchange="handleServiceImageSelect(this)">
+                                    
+                                    <label for="images-picker" class="w-full h-32 bg-gray-50 rounded-xl border-2 border-dashed border-gray-300 flex flex-col items-center justify-center text-gray-400 cursor-pointer hover:bg-gray-100 transition">
+                                        <i class="fas fa-cloud-upload-alt text-3xl mb-2"></i>
+                                        <p class="text-xs">Зураг сонгох (JPG, PNG, AVIF)</p>
+                                        <p class="text-[10px] text-gray-400 mt-1">Чирж дарааллыг солих боломжтой</p>
+                                    </label>
+                                    
+                                    <!-- Preview Container -->
+                                    <div id="image-preview-container" class="grid grid-cols-2 md:grid-cols-5 gap-3 w-full">
+                                        <!-- JS will fill this -->
+                                    </div>
+                                </div>
+                            </div>
+
+                            <hr class="border-gray-100">
+
+                            <!-- FAQ Section -->
+                            <div>
+                                <div class="flex justify-between items-center mb-3">
+                                    <label class="block text-sm font-medium text-gray-700">Түгээмэл асуулт хариулт (FAQ)</label>
+                                    <button type="button" onclick="addFaqRow()" class="text-xs text-purple-600 font-bold hover:text-purple-800">+ Асуулт нэмэх</button>
+                                </div>
+                                <div id="faq-container" class="space-y-3">
+                                    <!-- Dynamic Rows -->
+                                </div>
+                            </div>
+
+                            <hr class="border-gray-100">
+
+                            <!-- Terms -->
+                            <div class="flex items-start bg-gray-50 p-4 rounded-lg border border-gray-200">
+                                <div class="flex items-center h-5">
+                                    <input id="terms" type="checkbox" required disabled class="w-4 h-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500 disabled:opacity-50 disabled:cursor-not-allowed">
+                                </div>
+                                <div class="ml-3 text-sm">
+                                    <label for="terms" class="font-medium text-gray-700">Үйлчилгээний нөхцөл</label>
+                                    <p class="text-gray-500 text-xs">
+                                        Би <a href="#" onclick="openTermsModal(event)" class="text-purple-600 hover:text-purple-800 font-bold underline decoration-purple-300 underline-offset-2">Үйлчилгээний гэрээ</a>-тэй танилцаж, бүрэн хүлээн зөвшөөрч байна.
+                                        <span class="block text-[10px] text-red-500 mt-1">* Та гэрээтэй танилцсаны дараа зөвшөөрөх боломжтой.</span>
+                                    </p>
+                                </div>
+                            </div>
+
+                            <!-- Buttons -->
+                            <div class="flex gap-4 pt-2">
+                                <button type="submit" class="flex-1 bg-purple-600 text-white font-bold py-3 rounded-xl shadow-lg shadow-purple-500/30 hover:bg-purple-700 hover:-translate-y-0.5 transition-all">
+                                    Үйлчилгээ нийтлэх
+                                </button>
+                                <button type="button" onclick="history.back()" class="px-6 py-3 border border-gray-300 text-gray-600 font-bold rounded-xl hover:bg-gray-50 transition">
+                                    Болих
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Right Column: Tips -->
+                <div class="lg:col-span-1">
+                    <div class="bg-purple-50 border border-purple-100 rounded-2xl p-6 sticky top-24">
+                        <h3 class="font-bold text-purple-900 mb-4 flex items-center gap-2">
+                            <i class="fas fa-star"></i> Амжилттай зарах зөвлөмж
+                        </h3>
+                        <ul class="space-y-4 text-sm text-purple-800">
+                            <li class="flex gap-3">
+                                <span class="w-6 h-6 bg-purple-200 text-purple-700 rounded-full flex items-center justify-center flex-shrink-0 font-bold text-xs">1</span>
+                                <span><strong>Гарчиг:</strong> Товч бөгөөд тодорхой байх. Үйлчлүүлэгч юу авах вэ гэдгээ шууд ойлгох ёстой.</span>
+                            </li>
+                            <li class="flex gap-3">
+                                <span class="w-6 h-6 bg-purple-200 text-purple-700 rounded-full flex items-center justify-center flex-shrink-0 font-bold text-xs">2</span>
+                                <span><strong>Зураг:</strong> Чанартай, анхаарал татахуйц зураг ашиглах нь борлуулалтыг 30% нэмэгдүүлдэг.</span>
+                            </li>
+                            <li class="flex gap-3">
+                                <span class="w-6 h-6 bg-purple-200 text-purple-700 rounded-full flex items-center justify-center flex-shrink-0 font-bold text-xs">3</span>
+                                <span><strong>Үнэ:</strong> Зах зээлийн ханшийг судалж, өрсөлдөхүйц үнэ тавих.</span>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+
+            </div>
+        <?php endif; ?>
     </main>
 </div>
 
@@ -542,13 +645,16 @@ include 'includes/header.php';
 
   // Form Submit Event Handler - CRITICAL FIX
   // Энэ хэсэг нь form submit хийх үед hidden input-г JS array-аар шинэчилж байгааг баталгаажуулна.
-  document.getElementById('serviceForm').addEventListener('submit', function(e) {
-      updateServiceInputFiles();
-      // Хэрэв зураг байхгүй бол сануулга өгч болно (optional)
-      if (serviceImages.length === 0) {
-          // alert("Зураг оруулна уу!"); // Хэрэв хүсвэл
-      }
-  });
+  const serviceForm = document.getElementById('serviceForm');
+  if(serviceForm) {
+      serviceForm.addEventListener('submit', function(e) {
+          updateServiceInputFiles();
+          // Хэрэв зураг байхгүй бол сануулга өгч болно (optional)
+          if (serviceImages.length === 0) {
+              // alert("Зураг оруулна уу!"); // Хэрэв хүсвэл
+          }
+      });
+  }
 
   function handleServiceImageSelect(input) {
       const files = Array.from(input.files);
@@ -615,33 +721,36 @@ include 'includes/header.php';
       });
       // Update the hidden input that actually gets submitted
       const fileInput = document.getElementById('images-storage');
-      fileInput.files = dataTransfer.files;
-      
-      console.log("Files ready for upload:", fileInput.files.length); // Debug log
+      if(fileInput) {
+          fileInput.files = dataTransfer.files;
+          console.log("Files ready for upload:", fileInput.files.length); // Debug log
+      }
   }
 
   // Initialize SortableJS
   const previewContainer = document.getElementById('image-preview-container');
-  new Sortable(previewContainer, {
-      animation: 150,
-      ghostClass: 'sortable-ghost',
-      onEnd: function (evt) {
-          // Reorder the array based on new DOM order
-          const newOrder = [];
-          const items = previewContainer.querySelectorAll('.image-preview-item');
-          
-          items.forEach(item => {
-              const oldIndex = parseInt(item.getAttribute('data-index'));
-              newOrder.push(serviceImages[oldIndex]);
-          });
+  if(previewContainer) {
+      new Sortable(previewContainer, {
+          animation: 150,
+          ghostClass: 'sortable-ghost',
+          onEnd: function (evt) {
+              // Reorder the array based on new DOM order
+              const newOrder = [];
+              const items = previewContainer.querySelectorAll('.image-preview-item');
+              
+              items.forEach(item => {
+                  const oldIndex = parseInt(item.getAttribute('data-index'));
+                  newOrder.push(serviceImages[oldIndex]);
+              });
 
-          serviceImages = newOrder;
-          
-          // Re-render to update badges (#1, Cover, etc)
-          renderServiceImages();
-          updateServiceInputFiles();
-      }
-  });
+              serviceImages = newOrder;
+              
+              // Re-render to update badges (#1, Cover, etc)
+              renderServiceImages();
+              updateServiceInputFiles();
+          }
+      });
+  }
 
   // --- FAQ Logic ---
   function addFaqRow() {
@@ -668,8 +777,10 @@ include 'includes/header.php';
 
   function acceptTerms() {
       const checkbox = document.getElementById('terms');
-      checkbox.disabled = false;
-      checkbox.checked = true;
+      if(checkbox) {
+          checkbox.disabled = false;
+          checkbox.checked = true;
+      }
       closeTermsModal();
   }
 </script>

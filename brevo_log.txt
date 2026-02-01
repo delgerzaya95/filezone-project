@@ -184,3 +184,66 @@ Subject: Таны илгээсэн мэйлийн хариу
 Response: {"messageId":"<202601271057.27490021081@smtp-relay.mailin.fr>"}
 
 -----------------------------------
+WITHDRAWAL REQUEST - DT: 2026-02-01 14:45:58
+To: giamia999@gmail.com
+Response: {"messageId":"<202602010645.58797180740@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+WITHDRAWAL REQUEST - DT: 2026-02-01 14:47:15
+To: giamia999@gmail.com
+Response: {"messageId":"<202602010647.15269184219@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+WITHDRAWAL REQUEST - DT: 2026-02-01 14:54:39
+To: giamia999@gmail.com
+Response: {"messageId":"<202602010654.25164274938@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+EMAIL - DT: 2026-02-01 14:56:24
+To: giamia999@gmail.com
+Subject: Шинэ захиалга: Бизнес төлөвлөгөө боловсруулах - Filezone.mn
+Response: {"messageId":"<202602010656.16862008155@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+EMAIL - DT: 2026-02-01 15:10:24
+To: delgerzaya95@gmail.com
+Subject: Таны захиалга ажилдаа орлоо! - Filezone.mn
+Response: {"messageId":"<202602010710.23658804289@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+EMAIL - DT: 2026-02-01 15:12:01
+To: giamia999@gmail.com
+Subject: Шинэ маргаан үүслээ: Захиалга #23 - Filezone Admin
+Response: {"messageId":"<202602010712.14030063807@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+EMAIL - DT: 2026-02-01 17:13:40
+To: delgerzaya95@gmail.com
+Subject: Таны файл зөвшөөрөгдлөө! - Filezone.mn
+Response: {"messageId":"<202602010913.71365671579@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+EMAIL - DT: 2026-02-01 17:41:00
+To: delgerzaya95@gmail.com
+Subject: Таны файл зөвшөөрөгдлөө! - Filezone.mn
+Response: {"messageId":"<202602010941.37136687213@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+EMAIL - DT: 2026-02-01 17:47:53
+To: delgerzaya95@gmail.com
+Subject: Баяр хүргэе! Таны файл зарагдлаа - Filezone.mn
+Response: {"messageId":"<202602010947.23243608131@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+EMAIL - DT: 2026-02-01 17:59:07
+To: test@gmail.com
+Subject: Таны файл зөвшөөрөгдлөө! - Filezone.mn
+Response: {"messageId":"<202602010959.46919620755@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+EMAIL - DT: 2026-02-01 18:04:05
+To: delgerzaya95@gmail.com
+Subject: Таны файл зөвшөөрөгдлөө! - Filezone.mn
+Response: {"messageId":"<202602011004.42234928348@smtp-relay.mailin.fr>"}
+
+-----------------------------------

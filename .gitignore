@@ -5,3 +5,4 @@ google-login.php
 includes/db.php
 kids/db_kids.php
 api/
+uploads/

@@ -19,13 +19,13 @@ $error = '';
 
 /**
  * Гүйлгээний өвөрмөц дугаар үүсгэх
- * Format: PREFIX-YYYYMMDD-RANDOM (Жишээ: REF-20251222-AB92X)
+ * Format: PREFIX-YYYYMMDD-UNIQID (Илүү найдвартай)
  */
 function generateTransactionNumber($prefix = 'TRX') {
     $dateStr = date('Ymd');
-    // Санамсаргүй 5 тэмдэгт (Тоо болон Үсэг)
-    $randomStr = strtoupper(substr(str_shuffle('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'), 0, 5));
-    return $prefix . '-' . $dateStr . '-' . $randomStr;
+    // uniqid() ашиглан давхцахгүй ID үүсгэх + санамсаргүй тоо
+    $uniqueStr = strtoupper(substr(md5(uniqid(mt_rand(), true)), 0, 6));
+    return $prefix . '-' . $dateStr . '-' . $uniqueStr;
 }
 
 // --------------------------------------------------------------------------
@@ -50,18 +50,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
             $user_id = $request['user_id'];
             $amount = $request['amount'];
             
-            // Хэрэв transaction_number хоосон байвал (хуучин өгөгдөл) ID-г ашиглая
+            // Хэрэв transaction_number хоосон байвал ID-г ашиглая
             $req_num = !empty($request['transaction_number']) ? $request['transaction_number'] : ('REQ-OLD-' . $req_id);
 
             // Төлөв өөрчлөгдсөн эсэхийг шалгах
             if ($old_status !== $new_status) {
                 
                 // A. ТАТГАЛЗАХ (Pending/Completed -> Rejected) -> Мөнгө буцаах (Refund)
+                // Хэрэглэгчийн хүсэлтийг цуцалж байгаа тул мөнгийг буцааж Balance руу хийнэ.
                 if ($new_status === 'rejected' && $old_status !== 'rejected') {
                     $desc = "Буцаалт: Хүсэлт " . $req_num . " цуцлагдсан";
                     $tx_num = generateTransactionNumber('REF'); // REF - Refund
                     
-                    // Гүйлгээний түүх
+                    // Гүйлгээний түүх (User Transactions)
                     $refundStmt = $pdo->prepare("INSERT INTO user_transactions (user_id, type, amount, description, transaction_date, transaction_number) VALUES (?, 'deposit', ?, ?, NOW(), ?)");
                     $refundStmt->execute([$user_id, $amount, $desc, $tx_num]);
 
@@ -71,7 +72,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
                 }
 
                 // B. ТАТГАЛЗСАНЫГ БУЦААХ (Rejected -> Pending/Completed) -> Мөнгө дахин татах
+                // "Татгалзсан" төлвөөс буцааж байгаа бол хэрэглэгчид мөнгийг нь буцаагаад өгчихсөн байгаа. 
+                // Тиймээс дахин Balance-аас нь хасах хэрэгтэй.
                 elseif ($old_status === 'rejected' && $new_status !== 'rejected') {
+                    
+                    // Хэрэглэгчийн үлдэгдэл хүрэлцэхгүй байх эрсдэлийг энд шалгаж болно (Сонголттой)
+                    /*
+                    $checkBal = $pdo->prepare("SELECT balance FROM users WHERE id = ?");
+                    $checkBal->execute([$user_id]);
+                    if($checkBal->fetchColumn() < $amount) {
+                         throw new Exception("Хэрэглэгчийн үлдэгдэл хүрэлцэхгүй байна.");
+                    }
+                    */
+
                     $desc = "Залруулга: Хүсэлт " . $req_num . " сэргээгдсэн";
                     $tx_num = generateTransactionNumber('COR'); // COR - Correction
                     
@@ -84,25 +97,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
                     $balStmt->execute([$amount, $user_id]);
                 }
 
-                // 2. Төлөвийг шинэчлэх
-                $updateStmt = $pdo->prepare("UPDATE withdrawal_requests SET status = ? WHERE id = ?");
-                $updateStmt->execute([$new_status, $req_id]);
+                // 2. Төлөвийг шинэчлэх (UPDATE withdrawal_requests)
+                // Хэрэв "Completed" болж байвал processed_date-ийг шинэчилнэ.
+                if ($new_status === 'completed') {
+                    $updateStmt = $pdo->prepare("UPDATE withdrawal_requests SET status = ?, processed_date = NOW() WHERE id = ?");
+                    $updateStmt->execute([$new_status, $req_id]);
+                } else {
+                    // Бусад төлөв рүү шилжиж байвал processed_date-ийг NULL болгох эсвэл хэвээр үлдээх
+                    $updateStmt = $pdo->prepare("UPDATE withdrawal_requests SET status = ? WHERE id = ?");
+                    $updateStmt->execute([$new_status, $req_id]);
+                }
 
                 $_SESSION['message'] = "Хүсэлт " . $req_num . " амжилттай шинэчлэгдлээ.";
             } else {
-                $_SESSION['message'] = "Төлөв өөрчлөгдөөгүй байна.";
+                $_SESSION['message'] = "Төлөв өөрчлөгдөөгүй байна (Яг ижил төлөв сонгосон байна).";
             }
         } else {
-            $_SESSION['error'] = "Хүсэлт олдсонгүй.";
+            $_SESSION['error'] = "Хүсэлт олдсонгүй (ID: $req_id).";
         }
 
         $pdo->commit();
 
-    } catch (PDOException $e) {
+    } catch (Exception $e) {
         $pdo->rollBack();
         $_SESSION['error'] = "Алдаа гарлаа: " . $e->getMessage();
     }
 
+    // Redirect to clear POST data
     header("Location: finance.php");
     exit;
 }
@@ -181,14 +202,14 @@ $transactions = $pdo->query($t_sql)->fetchAll();
                 <!-- Messages -->
                 <?php if (isset($_SESSION['message'])): ?>
                     <div class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative mb-4" role="alert">
-                        <span class="block sm:inline"><?php echo $_SESSION['message']; ?></span>
+                        <span class="block sm:inline"><i class="fas fa-check-circle mr-2"></i><?php echo $_SESSION['message']; ?></span>
                     </div>
                     <?php unset($_SESSION['message']); ?>
                 <?php endif; ?>
 
                 <?php if (isset($_SESSION['error'])): ?>
                     <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">
-                        <span class="block sm:inline"><?php echo $_SESSION['error']; ?></span>
+                        <span class="block sm:inline"><i class="fas fa-exclamation-triangle mr-2"></i><?php echo $_SESSION['error']; ?></span>
                     </div>
                     <?php unset($_SESSION['error']); ?>
                 <?php endif; ?>
@@ -224,10 +245,10 @@ $transactions = $pdo->query($t_sql)->fetchAll();
                 <!-- Tabs -->
                 <div class="border-b border-slate-200 mb-6">
                     <nav class="-mb-px flex space-x-8" aria-label="Tabs">
-                        <button onclick="switchTab('withdrawals')" id="tab-withdrawals" class="tab-btn active whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm text-indigo-600 border-indigo-500">
+                        <button onclick="switchTab('withdrawals')" id="tab-withdrawals" class="tab-btn active whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm text-indigo-600 border-indigo-500 transition-colors">
                             Татсан мөнгө (Withdrawals)
                         </button>
-                        <button onclick="switchTab('transactions')" id="tab-transactions" class="tab-btn whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm text-slate-500 border-transparent hover:text-slate-700 hover:border-slate-300">
+                        <button onclick="switchTab('transactions')" id="tab-transactions" class="tab-btn whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm text-slate-500 border-transparent hover:text-slate-700 hover:border-slate-300 transition-colors">
                             Гүйлгээний түүх (Transactions)
                         </button>
                     </nav>
@@ -246,7 +267,7 @@ $transactions = $pdo->query($t_sql)->fetchAll();
                             <table class="w-full text-left border-collapse">
                                 <thead>
                                     <tr class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
-                                        <th class="px-6 py-4 font-semibold">Гүйлгээний №</th> <!-- ID -> Гүйлгээний № -->
+                                        <th class="px-6 py-4 font-semibold">Гүйлгээний №</th> 
                                         <th class="px-6 py-4 font-semibold">Хэрэглэгч</th>
                                         <th class="px-6 py-4 font-semibold">Дүн</th>
                                         <th class="px-6 py-4 font-semibold">Дансны мэдээлэл</th>
@@ -258,9 +279,7 @@ $transactions = $pdo->query($t_sql)->fetchAll();
                                     <?php if (count($withdrawals) > 0): ?>
                                         <?php foreach ($withdrawals as $w): ?>
                                         <?php 
-                                            // Fallback if transaction_number is empty (for old records before script run)
                                             $displayId = !empty($w['transaction_number']) ? $w['transaction_number'] : ('REQ-OLD-'.$w['id']);
-                                            
                                             $avatar = 'https://ui-avatars.com/api/?name=' . urlencode($w['username'] ?? 'User') . '&background=random&color=fff';
                                             if (!empty($w['avatar_url']) && file_exists('../' . $w['avatar_url'])) {
                                                 $avatar = '../' . $w['avatar_url'];
@@ -271,7 +290,14 @@ $transactions = $pdo->query($t_sql)->fetchAll();
                                                 <span class="font-mono text-xs font-semibold text-indigo-600 bg-indigo-50 px-2 py-1 rounded border border-indigo-100 select-all">
                                                     <?php echo htmlspecialchars($displayId); ?>
                                                 </span>
-                                                <div class="text-xs text-slate-400 mt-1"><?php echo isset($w['created_at']) ? date('Y-m-d H:i', strtotime($w['created_at'])) : ''; ?></div>
+                                                <div class="text-xs text-slate-400 mt-1" title="Үүсгэсэн огноо">
+                                                    <i class="far fa-clock mr-1"></i><?php echo isset($w['created_at']) ? date('Y-m-d H:i', strtotime($w['created_at'])) : (isset($w['request_date']) ? date('Y-m-d H:i', strtotime($w['request_date'])) : '-'); ?>
+                                                </div>
+                                                <?php if(!empty($w['processed_date'])): ?>
+                                                    <div class="text-xs text-green-600 mt-0.5" title="Шийдвэрлэсэн огноо">
+                                                        <i class="fas fa-check-double mr-1"></i><?php echo date('Y-m-d H:i', strtotime($w['processed_date'])); ?>
+                                                    </div>
+                                                <?php endif; ?>
                                             </td>
                                             <td class="px-6 py-4">
                                                 <div class="flex items-center gap-3">
@@ -285,7 +311,7 @@ $transactions = $pdo->query($t_sql)->fetchAll();
                                             <td class="px-6 py-4 font-bold text-slate-800"><?php echo number_format($w['amount']); ?>₮</td>
                                             <td class="px-6 py-4">
                                                 <div class="text-sm text-slate-700 font-medium"><?php echo htmlspecialchars($w['bank_name'] ?? $w['method']); ?></div>
-                                                <div class="text-xs text-slate-500"><?php echo htmlspecialchars($w['details'] ?? $w['account_name']); ?></div>
+                                                <div class="text-xs text-slate-500 font-mono"><?php echo htmlspecialchars($w['details'] ?? $w['account_name']); ?></div>
                                             </td>
                                             <td class="px-6 py-4 status-cell">
                                                 <?php if($w['status'] == 'completed'): ?>
@@ -342,7 +368,6 @@ $transactions = $pdo->query($t_sql)->fetchAll();
                                     <?php if (count($transactions) > 0): ?>
                                         <?php foreach ($transactions as $t): ?>
                                         <?php 
-                                            // Fallback
                                             $displayTxId = !empty($t['transaction_number']) ? $t['transaction_number'] : ('TRX-OLD-'.$t['id']);
                                         ?>
                                         <tr class="hover:bg-slate-50 transition-colors">
@@ -394,9 +419,10 @@ $transactions = $pdo->query($t_sql)->fetchAll();
             </div>
 
             <!-- Modal Content -->
-            <form method="POST" action="">
+            <form method="POST" action="finance.php">
                 <input type="hidden" name="action" value="update_status">
                 <input type="hidden" id="modal_request_id" name="request_id" value="">
+                <input type="hidden" name="update_status" value="1"> 
                 
                 <div class="modal-content py-4 text-left px-6">
                     <div class="flex justify-between items-center pb-3 border-b">
@@ -431,7 +457,7 @@ $transactions = $pdo->query($t_sql)->fetchAll();
 
                     <div class="flex justify-end pt-2 border-t mt-4 gap-2">
                         <button type="button" class="modal-close px-4 py-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition text-sm font-medium">Хаах</button>
-                        <button type="submit" name="update_status" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition text-sm font-medium shadow-md">Хадгалах</button>
+                        <button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition text-sm font-medium shadow-md">Хадгалах</button>
                     </div>
                 </div>
             </form>
@@ -445,10 +471,12 @@ $transactions = $pdo->query($t_sql)->fetchAll();
             document.getElementById('content-transactions').classList.add('hidden');
             document.getElementById('content-' + tabId).classList.remove('hidden');
             
-            document.getElementById('tab-withdrawals').className = 'tab-btn whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm text-slate-500 border-transparent hover:text-slate-700 hover:border-slate-300';
-            document.getElementById('tab-transactions').className = 'tab-btn whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm text-slate-500 border-transparent hover:text-slate-700 hover:border-slate-300';
+            // Reset styles
+            document.getElementById('tab-withdrawals').className = 'tab-btn whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm text-slate-500 border-transparent hover:text-slate-700 hover:border-slate-300 transition-colors';
+            document.getElementById('tab-transactions').className = 'tab-btn whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm text-slate-500 border-transparent hover:text-slate-700 hover:border-slate-300 transition-colors';
             
-            document.getElementById('tab-' + tabId).className = 'tab-btn active whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm text-indigo-600 border-indigo-500';
+            // Set active
+            document.getElementById('tab-' + tabId).className = 'tab-btn active whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm text-indigo-600 border-indigo-500 transition-colors';
         }
 
         // Modal Logic

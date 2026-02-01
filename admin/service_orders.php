@@ -1,9 +1,13 @@
 <?php
 session_start();
 require_once '../includes/db.php';
-// Brevo Email Handler
+
+// Brevo Email Handler (Админы үйлдлүүдэд зориулсан тусгай файл)
+// admin/api/brevo_admin.php эсвэл api/brevo_admin.php байршлыг шалгах
 if (file_exists('api/brevo_admin.php')) {
     require_once 'api/brevo_admin.php';
+} elseif (file_exists('../api/brevo_admin.php')) {
+    require_once '../api/brevo_admin.php';
 }
 
 // Админ эрх шалгах
@@ -87,8 +91,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         try {
             $pdo->beginTransaction();
 
-            // Get Current Order State (Lock for update)
-            $stmt = $pdo->prepare("SELECT * FROM service_orders WHERE id = ? FOR UPDATE");
+            // Get Current Order State (Lock for update) with USER DETAILS for Email
+            $stmt = $pdo->prepare("
+                SELECT so.*, 
+                       s.title as service_title,
+                       buyer.email as buyer_email, buyer.username as buyer_name,
+                       seller.email as seller_email, seller.username as seller_name
+                FROM service_orders so
+                LEFT JOIN services s ON so.service_id = s.id
+                LEFT JOIN users buyer ON so.buyer_id = buyer.id
+                LEFT JOIN users seller ON so.seller_id = seller.id
+                WHERE so.id = ? 
+                FOR UPDATE
+            ");
             $stmt->execute([$id]);
             $order = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -153,11 +168,59 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $rep_upd = $pdo->prepare("UPDATE order_reports SET status = 'resolved', admin_note = ? WHERE order_id = ? AND status = 'pending'");
             $rep_upd->execute(["Админ шийдвэрлэв: $new_status. $admin_note", $id]);
 
-            // 5. Notify Users (Email) - Optional
-            // Бид энд notification.php ашиглаж болно, эсвэл Brevo функц дуудаж болно.
+            // ---------------------------------------------------------
+            // 5. INTERNAL NOTIFICATIONS (Database) - ШИНЭЭР НЭМСЭН
+            // ---------------------------------------------------------
+            if ($new_status === 'completed') {
+                // To Buyer (Success notification)
+                $notif_msg = "Админ шийдвэр: Захиалга #$id АМЖИЛТТАЙ дууслаа.";
+                $notif_link = "profile/order_details.php?id=$id";
+                $pdo->prepare("INSERT INTO notifications (user_id, type, message, link) VALUES (?, 'success', ?, ?)")
+                    ->execute([$order['buyer_id'], $notif_msg, $notif_link]);
+
+                // To Seller (Success notification - money released)
+                $notif_msg = "Админ шийдвэр: Захиалга #$id дуусч, орлого таны дансанд орлоо.";
+                $notif_link = "profile/order_details.php?id=$id";
+                $pdo->prepare("INSERT INTO notifications (user_id, type, message, link) VALUES (?, 'success', ?, ?)")
+                    ->execute([$order['seller_id'], $notif_msg, $notif_link]);
+
+            } elseif ($new_status === 'cancelled') {
+                // To Buyer (Info notification - money refunded)
+                $notif_msg = "Админ шийдвэр: Захиалга #$id ЦУЦЛАГДЛАА. Төлбөр буцаан олгогдсон.";
+                $notif_link = "profile/order_details.php?id=$id";
+                $pdo->prepare("INSERT INTO notifications (user_id, type, message, link) VALUES (?, 'info', ?, ?)")
+                    ->execute([$order['buyer_id'], $notif_msg, $notif_link]);
+
+                // To Seller (Error notification - cancelled)
+                $notif_msg = "Админ шийдвэр: Захиалга #$id ЦУЦЛАГДЛАА.";
+                $notif_link = "profile/order_details.php?id=$id";
+                $pdo->prepare("INSERT INTO notifications (user_id, type, message, link) VALUES (?, 'error', ?, ?)")
+                    ->execute([$order['seller_id'], $notif_msg, $notif_link]);
+            }
 
             $pdo->commit();
-            echo json_encode(['success' => true, 'message' => 'Захиалга амжилттай шийдвэрлэгдлээ.']);
+
+            // 6. Notify Users (Email) via Brevo
+            // Энд `api/brevo_admin.php` доторх функцийг дуудна
+            if (function_exists('sendAdminDecisionEmail')) {
+                try {
+                    sendAdminDecisionEmail(
+                        $order['buyer_email'], 
+                        $order['seller_email'], 
+                        $id, 
+                        $order['service_title'], 
+                        $new_status, 
+                        $admin_note
+                    );
+                } catch (Exception $mailEx) {
+                    // Мэйл илгээхэд алдаа гарсан ч JSON хариуг амжилттай гэж буцаана, гэхдээ log бичнэ
+                    error_log("Brevo Admin Mail Error: " . $mailEx->getMessage());
+                }
+            } else {
+                error_log("sendAdminDecisionEmail function not found in api/brevo_admin.php");
+            }
+
+            echo json_encode(['success' => true, 'message' => 'Захиалга амжилттай шийдвэрлэгдлээ. Мэдэгдэл болон мэйл илгээгдсэн.']);
 
         } catch (Exception $e) {
             $pdo->rollBack();

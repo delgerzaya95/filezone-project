@@ -61,6 +61,11 @@ function getIconClass($page_names) {
             Хяналтын самбар
         </a>
 
+        <a href="monitor.php" class="<?php echo getLinkClass('monitor.php'); ?> flex items-center px-6 py-3 text-sm font-medium group transition-all duration-200">
+            <i class="fas fa-server w-5 text-center mr-3 <?php echo getIconClass('monitor.php'); ?>"></i>
+            Сервер хяналт
+        </a>
+
         <!-- SPECIAL SECTION: KIDS -->
         <div class="px-4 py-2 my-2">
             <?php 

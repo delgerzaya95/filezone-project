@@ -66,31 +66,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($_POST['action'] === 'delete_file') {
             $id = intval($_POST['file_id']);
             try {
-                $stmt = $pdo->prepare("SELECT file_url FROM files WHERE id = ?");
+                $stmt = $pdo->prepare("SELECT file_url, is_external FROM files WHERE id = ?");
                 $stmt->execute([$id]);
                 $file = $stmt->fetch(PDO::FETCH_ASSOC);
 
                 if ($file) {
-                    $file_path = '../' . $file['file_url']; 
-                    if (!empty($file['file_url']) && file_exists($file_path)) {
-                        unlink($file_path);
-                    }
-                    
-                    $file_dir = dirname($file_path);
-                    $p_stmt = $pdo->prepare("SELECT preview_url FROM file_previews WHERE file_id = ?");
-                    $p_stmt->execute([$id]);
-                    $previews = $p_stmt->fetchAll(PDO::FETCH_ASSOC);
+                    // Зөвхөн LOCAL файл байвал сервэрээс устгана
+                    if ($file['is_external'] == 0 && !empty($file['file_url'])) {
+                        $file_path = '../' . $file['file_url']; 
+                        if (file_exists($file_path)) {
+                            unlink($file_path);
+                        }
+                        
+                        // Clean up file directory if empty
+                        $file_dir = dirname($file_path);
+                        
+                        // Delete Previews
+                        $p_stmt = $pdo->prepare("SELECT preview_url FROM file_previews WHERE file_id = ?");
+                        $p_stmt->execute([$id]);
+                        $previews = $p_stmt->fetchAll(PDO::FETCH_ASSOC);
 
-                    foreach ($previews as $row) {
-                        $img_path = '../' . $row['preview_url'];
-                        if (!empty($row['preview_url']) && file_exists($img_path)) {
-                            unlink($img_path);
+                        foreach ($previews as $row) {
+                            $img_path = '../' . $row['preview_url'];
+                            if (!empty($row['preview_url']) && file_exists($img_path)) {
+                                unlink($img_path);
+                            }
+                        }
+
+                        $previews_dir = $file_dir . '/previews';
+                        if (is_dir($previews_dir)) @rmdir($previews_dir);
+                        if (is_dir($file_dir)) @rmdir($file_dir);
+                    } else {
+                        // External link: Just delete previews if any (covers)
+                        $p_stmt = $pdo->prepare("SELECT preview_url FROM file_previews WHERE file_id = ?");
+                        $p_stmt->execute([$id]);
+                        $previews = $p_stmt->fetchAll(PDO::FETCH_ASSOC);
+                        foreach ($previews as $row) {
+                            $img_path = '../' . $row['preview_url'];
+                            if (file_exists($img_path)) unlink($img_path);
                         }
                     }
-
-                    $previews_dir = $file_dir . '/previews';
-                    if (is_dir($previews_dir)) @rmdir($previews_dir);
-                    if (is_dir($file_dir)) @rmdir($file_dir);
 
                     $del_stmt = $pdo->prepare("DELETE FROM files WHERE id = ?");
                     $del_stmt->execute([$id]);
@@ -160,8 +175,12 @@ if ($status_filter) {
 
 // 3. Type
 if ($type_filter) {
-    $where_clauses[] = "f.file_type = ?";
-    $params[] = $type_filter;
+    if ($type_filter === 'link') {
+        $where_clauses[] = "f.is_external = 1";
+    } else {
+        $where_clauses[] = "f.file_type = ?";
+        $params[] = $type_filter;
+    }
 }
 
 // 4. Date Range
@@ -215,6 +234,7 @@ function getFileIcon($type) {
         case 'mp4': case 'mov': case 'avi': return 'fa-file-video text-red-600';
         case 'exe': return 'fa-cogs text-gray-500';
         case 'txt': return 'fa-file-alt text-slate-400';
+        case 'link': return 'fa-link text-indigo-500'; // Added Link Icon
         default: return 'fa-file text-gray-400';
     }
 }
@@ -253,7 +273,7 @@ function getFileIcon($type) {
                     <h1 class="text-xl font-bold text-slate-800">Файлын удирдлага</h1>
                 </div>
                 <div class="flex items-center gap-3">
-                    <a href="file_upload.php" target="_blank" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition shadow-sm">
+                    <a href="../upload.php" target="_blank" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition shadow-sm">
                         <i class="fas fa-cloud-upload-alt"></i> <span class="hidden sm:inline">Файл нэмэх</span>
                     </a>
                 </div>
@@ -291,6 +311,7 @@ function getFileIcon($type) {
                             <label class="block text-xs font-semibold text-slate-500 mb-1 uppercase">Файлын төрөл</label>
                             <select name="type" class="w-full border border-slate-300 rounded-lg text-sm px-3 py-2 bg-white text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500">
                                 <option value="">Бүх төрөл</option>
+                                <option value="link" <?php if($type_filter == 'link') echo 'selected'; ?>>🔗 Гадаад холбоос</option>
                                 <option value="pdf" <?php if($type_filter == 'pdf') echo 'selected'; ?>>PDF</option>
                                 <option value="docx" <?php if($type_filter == 'docx') echo 'selected'; ?>>Word</option>
                                 <option value="xlsx" <?php if($type_filter == 'xlsx') echo 'selected'; ?>>Excel</option>
@@ -353,7 +374,9 @@ function getFileIcon($type) {
                                                         <?php echo htmlspecialchars($file['title']); ?>
                                                     </p>
                                                     <p class="text-xs text-slate-500 mt-0.5">
-                                                        <span class="font-medium bg-slate-100 px-1 rounded"><?php echo strtoupper($file['file_type']); ?></span> • <?php echo formatSize($file['file_size']); ?> • <?php echo date('Y-m-d', strtotime($file['upload_date'])); ?>
+                                                        <span class="font-medium bg-slate-100 px-1 rounded"><?php echo strtoupper($file['file_type']); ?></span> • 
+                                                        <?php echo ($file['is_external'] == 1) ? 'External Link' : formatSize($file['file_size']); ?> • 
+                                                        <?php echo date('Y-m-d', strtotime($file['upload_date'])); ?>
                                                     </p>
                                                 </div>
                                             </div>
@@ -410,11 +433,17 @@ function getFileIcon($type) {
                                                 <button onclick='openEditModal(<?php echo json_encode($file); ?>)' class="p-1.5 text-slate-400 hover:text-indigo-600 rounded hover:bg-indigo-50 transition" title="Засах / Дэлгэрэнгүй">
                                                     <i class="fas fa-pen"></i>
                                                 </button>
-                                                <?php if(!empty($file['file_url'])): ?>
-                                                <a href="../<?php echo $file['file_url']; ?>" target="_blank" class="p-1.5 text-slate-400 hover:text-green-600 rounded hover:bg-green-50 transition" title="Татах">
-                                                    <i class="fas fa-download"></i>
-                                                </a>
+                                                
+                                                <?php if($file['is_external'] == 1): ?>
+                                                    <a href="<?php echo htmlspecialchars($file['external_link']); ?>" target="_blank" class="p-1.5 text-slate-400 hover:text-indigo-600 rounded hover:bg-indigo-50 transition" title="Холбоос нээх">
+                                                        <i class="fas fa-external-link-alt"></i>
+                                                    </a>
+                                                <?php elseif(!empty($file['file_url'])): ?>
+                                                    <a href="../<?php echo $file['file_url']; ?>" target="_blank" class="p-1.5 text-slate-400 hover:text-green-600 rounded hover:bg-green-50 transition" title="Татах">
+                                                        <i class="fas fa-download"></i>
+                                                    </a>
                                                 <?php endif; ?>
+
                                                 <button onclick="deleteFile(<?php echo $file['id']; ?>)" class="p-1.5 text-slate-400 hover:text-red-600 rounded hover:bg-red-50 transition" title="Устгах">
                                                     <i class="fas fa-trash-alt"></i>
                                                 </button>
@@ -504,6 +533,17 @@ function getFileIcon($type) {
                                     </div>
                                 </div>
 
+                                <!-- External Link Display (Hidden by default) -->
+                                <div id="externalLinkGroup" class="hidden">
+                                    <label class="block text-sm font-medium text-slate-700 mb-1">Гадаад холбоос</label>
+                                    <div class="flex gap-2">
+                                        <input type="text" id="editExternalLink" readonly class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-gray-50 text-blue-600 underline cursor-pointer" onclick="window.open(this.value, '_blank')">
+                                        <a id="editExternalLinkBtn" href="#" target="_blank" class="px-3 py-2 bg-indigo-50 text-indigo-600 rounded-lg border border-indigo-100 hover:bg-indigo-100 transition">
+                                            <i class="fas fa-external-link-alt"></i>
+                                        </a>
+                                    </div>
+                                </div>
+
                                 <div>
                                     <label class="block text-sm font-medium text-slate-700 mb-1">Тайлбар</label>
                                     <div id="editFileDesc" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-gray-50 h-32 overflow-y-auto"></div>
@@ -576,10 +616,25 @@ function getFileIcon($type) {
             document.getElementById('editFileStatus').value = file.status;
             document.getElementById('editRejectReason').value = file.reject_reason || '';
             
-            // File Download Link
+            // External Link Logic
+            const extGroup = document.getElementById('externalLinkGroup');
+            if (file.is_external == 1) {
+                extGroup.classList.remove('hidden');
+                document.getElementById('editExternalLink').value = file.external_link;
+                document.getElementById('editExternalLinkBtn').href = file.external_link;
+            } else {
+                extGroup.classList.add('hidden');
+            }
+
+            // File Download/Visit Link
             const dlLink = document.getElementById('downloadLink');
-            if(file.file_url) {
+            if (file.is_external == 1) {
+                dlLink.href = file.external_link;
+                dlLink.innerHTML = '<i class="fas fa-external-link-alt mr-2"></i> Холбоосоор орох';
+                dlLink.classList.remove('hidden');
+            } else if(file.file_url) {
                 dlLink.href = '../' + file.file_url;
+                dlLink.innerHTML = '<i class="fas fa-download mr-2"></i> Файлыг татах / Харах';
                 dlLink.classList.remove('hidden');
             } else {
                 dlLink.classList.add('hidden');

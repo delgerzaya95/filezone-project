@@ -84,9 +84,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $subcategory_id = intval($_POST['subcategory_id']);
     $child_category_id = isset($_POST['child_category_id']) && !empty($_POST['child_category_id']) ? intval($_POST['child_category_id']) : null;
 
+    // Type of upload (file replace or link replace)
+    $upload_type = isset($_POST['upload_type']) ? $_POST['upload_type'] : ''; 
+
     // Chunk Upload-аас ирсэн шинэ файлын зам
     $uploaded_temp_path = isset($_POST['uploaded_temp_path']) ? $_POST['uploaded_temp_path'] : '';
     $uploaded_original_name = isset($_POST['uploaded_original_name']) ? $_POST['uploaded_original_name'] : '';
+    
+    // External Link
+    $external_link = isset($_POST['external_link']) ? trim($_POST['external_link']) : '';
 
     if (empty($title)) {
         $error = "Файлын гарчиг хоосон байна.";
@@ -95,11 +101,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $pdo->beginTransaction();
             $new_file_uploaded = false;
 
-            // --- 1. IMAGE DELETION LOGIC (Шинэ файл оруулахаас өмнө) ---
+            // --- 1. IMAGE DELETION LOGIC ---
             if (isset($_POST['delete_previews']) && is_array($_POST['delete_previews'])) {
                 foreach ($_POST['delete_previews'] as $del_id) {
                     $del_id = intval($del_id);
-                    // Зургийн замыг олж устгах
                     $stmt_get_img = $pdo->prepare("SELECT preview_url FROM file_previews WHERE id = ? AND file_id = ?");
                     $stmt_get_img->execute([$del_id, $file_id]);
                     $img_row = $stmt_get_img->fetch(PDO::FETCH_ASSOC);
@@ -109,22 +114,41 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                         if (file_exists($path_to_del)) {
                             unlink($path_to_del);
                         }
-                        // DB-ээс устгах
                         $stmt_del_img = $pdo->prepare("DELETE FROM file_previews WHERE id = ?");
                         $stmt_del_img->execute([$del_id]);
                     }
                 }
             }
 
-            // Одоо байгаа зургийн тоог дахин тоолох (Шинээр нэмэхэд хэрэгтэй)
             $stmt_count = $pdo->prepare("SELECT COUNT(*) FROM file_previews WHERE file_id = ?");
             $stmt_count->execute([$file_id]);
             $current_image_count = $stmt_count->fetchColumn();
 
 
-            // --- 2. MAIN FILE UPDATE LOGIC ---
-            if (!empty($uploaded_temp_path) && !empty($uploaded_original_name)) {
+            // --- 2. MAIN FILE / LINK UPDATE LOGIC ---
+            
+            // CASE A: Changing to External Link
+            if ($upload_type === 'link' && !empty($external_link)) {
+                if (!filter_var($external_link, FILTER_VALIDATE_URL)) {
+                    throw new Exception("Зөв гадаад холбоос (URL) оруулна уу.");
+                }
+
+                // If switching from File to Link, delete old file
+                if ($file['is_external'] == 0 && !empty($file['file_url'])) {
+                    $old_file_path = '../' . $file['file_url'];
+                    if (file_exists($old_file_path) && is_file($old_file_path)) {
+                        unlink($old_file_path);
+                    }
+                }
+
+                $update_sql = "UPDATE files SET is_external = 1, external_link = ?, file_url = NULL, file_size = 0, file_type = 'link', status = 'pending', upload_date = NOW() WHERE id = ?";
+                $stmt_link = $pdo->prepare($update_sql);
+                $stmt_link->execute([$external_link, $file_id]);
                 
+                $new_file_uploaded = true; // Trigger admin notification
+            } 
+            // CASE B: Changing to File (Chunk Upload)
+            elseif ($upload_type === 'file' && !empty($uploaded_temp_path)) {
                 $new_file_uploaded = true;
                 
                 $real_temp_path = str_replace('../', '', $uploaded_temp_path);
@@ -154,10 +178,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $final_filename = str_replace(' ', '_', $final_filename);
                 $final_path = $upload_dir . $final_filename;
                 
-                // Old file delete
-                $old_file_path = '../' . $file['file_url'];
-                if (file_exists($old_file_path) && is_file($old_file_path)) {
-                    unlink($old_file_path);
+                // Old file delete (if exists)
+                if (!empty($file['file_url'])) {
+                    $old_file_path = '../' . $file['file_url'];
+                    if (file_exists($old_file_path) && is_file($old_file_path)) {
+                        unlink($old_file_path);
+                    }
                 }
 
                 if (rename($backend_temp_path, $final_path)) {
@@ -165,7 +191,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     $file_size = filesize($final_path);
                     
                     // STATUS UPDATE: Шинэ файл орсон тул 'pending' болгоно
-                    $file_update_sql = "UPDATE files SET file_url = ?, file_type = ?, file_size = ?, status = 'pending', upload_date = NOW() WHERE id = ?";
+                    $file_update_sql = "UPDATE files SET is_external = 0, external_link = NULL, file_url = ?, file_type = ?, file_size = ?, status = 'pending', upload_date = NOW() WHERE id = ?";
                     $stmt_f = $pdo->prepare($file_update_sql);
                     $stmt_f->execute([$db_file_path, $file_ext, $file_size, $file_id]);
                 } else {
@@ -173,8 +199,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 }
             }
 
-            // --- 3. GENERAL INFO UPDATE (No Status Change Here) ---
-            // Энд status баганыг өөрчлөхгүй байгаа тул хуучин статус хэвээр үлдэнэ
+            // --- 3. GENERAL INFO UPDATE ---
             $update_sql = "UPDATE files SET title = ?, price = ?, description = ?, category_id = ?, subcategory_id = ?, child_category_id = ? WHERE id = ?";
             $update_stmt = $pdo->prepare($update_sql);
             $update_stmt->execute([$title, $price, $description, $category_id, $subcategory_id, $child_category_id, $file_id]);
@@ -207,10 +232,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
             $pdo->commit();
             
-            // Зөвхөн шинэ файл орсон үед л админд мэдэгдэнэ
+            // Send Admin Notification if File/Link changed
             if ($new_file_uploaded) {
-                sendEmailNotification($title . " (Шинэ файл солигдсон - Шалгах шаардлагатай)");
-                $message = "Файл болон мэдээлэл шинэчлэгдлээ. Админ баталгаажуулахыг хүлээнэ үү.";
+                $changeType = ($upload_type === 'link') ? "Гадаад холбоос шинэчлэгдсэн" : "Файл шинэчлэгдсэн";
+                sendEmailNotification($title . " (" . $changeType . " - Шалгах шаардлагатай)");
+                $message = "Амжилттай! Файлын өгөгдөл шинэчлэгдлээ. Админ шалгасны дараа дахин нийтлэгдэх болно.";
             } else {
                 $message = "Мэдээлэл амжилттай хадгалагдлаа.";
             }
@@ -299,19 +325,27 @@ include 'header.php';
                             <div class="bg-blue-50 border border-blue-100 rounded-xl p-4 flex items-center justify-between">
                                 <div class="flex items-center gap-3">
                                     <div class="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center text-blue-600">
-                                        <i class="fas fa-file-alt text-lg"></i>
+                                        <i class="fas <?php echo ($file['is_external'] == 1) ? 'fa-link' : 'fa-file-alt'; ?> text-lg"></i>
                                     </div>
-                                    <div>
-                                        <p class="text-sm font-bold text-gray-900">Одоо байгаа файл</p>
-                                        <a href="../<?php echo $file['file_url']; ?>" target="_blank" class="text-xs text-blue-600 hover:underline break-all">
-                                            <?php echo basename($file['file_url']); ?>
-                                        </a>
+                                    <div class="flex-1 min-w-0">
+                                        <p class="text-sm font-bold text-gray-900">Одоогийн файл / Холбоос</p>
+                                        <?php if($file['is_external'] == 1): ?>
+                                            <a href="<?php echo htmlspecialchars($file['external_link']); ?>" target="_blank" class="text-xs text-blue-600 hover:underline break-all block truncate max-w-xs">
+                                                <?php echo htmlspecialchars($file['external_link']); ?>
+                                            </a>
+                                        <?php else: ?>
+                                            <a href="../<?php echo $file['file_url']; ?>" target="_blank" class="text-xs text-blue-600 hover:underline break-all block truncate max-w-xs">
+                                                <?php echo basename($file['file_url']); ?>
+                                            </a>
+                                        <?php endif; ?>
                                     </div>
                                 </div>
                                 <div class="flex flex-col items-end gap-1">
+                                    <?php if($file['is_external'] == 0): ?>
                                     <span class="text-xs font-mono bg-white px-2 py-1 rounded border">
                                         <?php echo round($file['file_size'] / 1024 / 1024, 2); ?> MB
                                     </span>
+                                    <?php endif; ?>
                                     <span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full 
                                         <?php echo $file['status'] === 'approved' ? 'bg-green-100 text-green-700' : ($file['status'] === 'rejected' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'); ?>">
                                         <?php echo $file['status']; ?>
@@ -319,29 +353,56 @@ include 'header.php';
                                 </div>
                             </div>
 
-                            <!-- FILE REPLACE ZONE -->
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1.5">Файлыг солих (Сонголттой)</label>
-                                <div class="bg-white border-2 border-dashed border-gray-300 rounded-2xl p-6 text-center hover:bg-gray-50 transition cursor-pointer group relative" id="drop-zone">
-                                    <input type="file" id="file-upload" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onchange="handleFileSelect(this)">
-                                    <div class="w-12 h-12 bg-gray-100 text-gray-500 rounded-full flex items-center justify-center mx-auto mb-3 group-hover:scale-110 transition duration-300">
-                                        <i class="fas fa-cloud-upload-alt text-xl"></i>
-                                    </div>
-                                    <p class="text-sm text-gray-600 mb-1" id="drop-zone-text">Шинэ файл чирж оруулах эсвэл дарж сонгоно уу</p>
-                                    <p class="text-xs text-gray-400">Өмнөх файлыг дарж устгаад шинийг хадгална. <span class="text-red-500 font-medium">Статус Pending болно.</span></p>
-                                </div>
+                            <!-- FILE REPLACE ZONE (TOGGLE) -->
+                            <div class="border border-gray-200 rounded-xl p-4">
+                                <h3 class="text-sm font-bold text-gray-900 mb-3">Файл солих / Холбоос өөрчлөх</h3>
                                 
-                                <!-- Progress Bar -->
-                                <div id="progress-container" class="hidden mt-3 bg-white p-3 rounded-lg border border-gray-200">
-                                    <div class="flex justify-between mb-1">
-                                        <span class="text-xs font-medium text-gray-700" id="progress-filename">File...</span>
-                                        <span class="text-xs font-bold text-brand-600" id="progress-percent">0%</span>
-                                    </div>
-                                    <div class="w-full bg-gray-200 rounded-full h-2">
-                                        <div id="progress-bar" class="bg-blue-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
-                                    </div>
-                                    <p class="text-xs text-gray-400 mt-1 text-center" id="progress-status">Хуулж байна...</p>
+                                <div class="flex gap-4 mb-4">
+                                    <label class="flex items-center gap-2 cursor-pointer">
+                                        <input type="radio" name="upload_type" value="none" checked onclick="toggleUploadType()" class="text-blue-600">
+                                        <span class="text-sm text-gray-700">Өөрчлөхгүй</span>
+                                    </label>
+                                    <label class="flex items-center gap-2 cursor-pointer">
+                                        <input type="radio" name="upload_type" value="file" onclick="toggleUploadType()" class="text-blue-600">
+                                        <span class="text-sm text-gray-700">Файл хуулах</span>
+                                    </label>
+                                    <label class="flex items-center gap-2 cursor-pointer">
+                                        <input type="radio" name="upload_type" value="link" onclick="toggleUploadType()" class="text-blue-600">
+                                        <span class="text-sm text-gray-700">Гадаад холбоос</span>
+                                    </label>
                                 </div>
+
+                                <!-- 1. File Upload Area -->
+                                <div id="file-upload-area" class="hidden">
+                                    <div class="bg-white border-2 border-dashed border-gray-300 rounded-xl p-6 text-center hover:bg-gray-50 transition cursor-pointer group relative" id="drop-zone">
+                                        <input type="file" id="file-upload" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onchange="handleFileSelect(this)">
+                                        <div class="w-10 h-10 bg-gray-100 text-gray-500 rounded-full flex items-center justify-center mx-auto mb-2 group-hover:scale-110 transition duration-300">
+                                            <i class="fas fa-cloud-upload-alt"></i>
+                                        </div>
+                                        <p class="text-sm text-gray-600" id="drop-zone-text">Шинэ файл сонгох</p>
+                                    </div>
+                                    <!-- Progress Bar -->
+                                    <div id="progress-container" class="hidden mt-3 bg-white p-3 rounded-lg border border-gray-200">
+                                        <div class="flex justify-between mb-1">
+                                            <span class="text-xs font-medium text-gray-700" id="progress-filename">File...</span>
+                                            <span class="text-xs font-bold text-brand-600" id="progress-percent">0%</span>
+                                        </div>
+                                        <div class="w-full bg-gray-200 rounded-full h-2">
+                                            <div id="progress-bar" class="bg-blue-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+                                        </div>
+                                        <p class="text-xs text-gray-400 mt-1 text-center" id="progress-status">Хуулж байна...</p>
+                                    </div>
+                                </div>
+
+                                <!-- 2. External Link Area -->
+                                <div id="link-upload-area" class="hidden">
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Шинэ холбоос (URL)</label>
+                                    <input type="url" name="external_link" id="external_link" class="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none" placeholder="https://drive.google.com/...">
+                                </div>
+
+                                <p class="text-xs text-orange-500 mt-2 hidden" id="status-warning">
+                                    <i class="fas fa-exclamation-triangle mr-1"></i> Анхаар: Файл эсвэл холбоос өөрчилбөл статус "Pending" болно.
+                                </p>
                             </div>
 
                             <hr class="border-gray-100">
@@ -460,15 +521,11 @@ include 'header.php';
                     <ul class="space-y-3 text-sm text-yellow-800">
                         <li class="flex gap-2">
                             <i class="fas fa-info-circle mt-0.5 text-yellow-600"></i>
-                            <span>Шинэ үндсэн файл оруулбал Админ дахин баталгаажуулах шаардлагатай болж, төлөв "Pending" болно.</span>
+                            <span>Файл эсвэл холбоосыг өөрчилбөл Админ дахин баталгаажуулна.</span>
                         </li>
                         <li class="flex gap-2">
                             <i class="fas fa-check-circle mt-0.5 text-yellow-600"></i>
                             <span>Зөвхөн тайлбар, үнэ, зураг засахад статус өөрчлөгдөхгүй.</span>
-                        </li>
-                        <li class="flex gap-2">
-                            <i class="fas fa-shield-alt mt-0.5 text-yellow-600"></i>
-                            <span>Шинэ файл автоматаар вирус шалгагдана.</span>
                         </li>
                     </ul>
                 </div>
@@ -486,6 +543,28 @@ include 'header.php';
     const childCats = <?php echo json_encode($child_categories); ?>;
     const currentUserId = <?php echo json_encode($user_id); ?>;
     let currentImageCount = <?php echo count($existing_previews); ?>;
+
+    // Toggle Upload Types
+    function toggleUploadType() {
+        const type = document.querySelector('input[name="upload_type"]:checked').value;
+        const fileArea = document.getElementById('file-upload-area');
+        const linkArea = document.getElementById('link-upload-area');
+        const warning = document.getElementById('status-warning');
+
+        if (type === 'file') {
+            fileArea.classList.remove('hidden');
+            linkArea.classList.add('hidden');
+            warning.classList.remove('hidden');
+        } else if (type === 'link') {
+            fileArea.classList.add('hidden');
+            linkArea.classList.remove('hidden');
+            warning.classList.remove('hidden');
+        } else {
+            fileArea.classList.add('hidden');
+            linkArea.classList.add('hidden');
+            warning.classList.add('hidden');
+        }
+    }
 
     // Price Formatting
     function formatPrice(input) {
@@ -573,15 +652,21 @@ include 'header.php';
     async function handleFormSubmit() {
         const title = document.querySelector('input[name="title"]').value;
         const price = document.getElementById('priceInput').value;
+        const uploadType = document.querySelector('input[name="upload_type"]:checked').value;
         
         if (!title || !price) { alert("Гарчиг болон үнийг оруулна уу."); return; }
+
+        if (uploadType === 'link') {
+            const link = document.getElementById('external_link').value;
+            if (!link) { alert("Холбоосоо оруулна уу."); return; }
+        }
 
         const btn = document.getElementById('saveBtn');
         btn.disabled = true;
         btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Уншиж байна...';
 
-        // 1. If New File Selected -> Upload it first
-        if (selectedFile) {
+        // 1. If File Selected (and upload type is file) -> Upload it first
+        if (uploadType === 'file' && selectedFile) {
             document.getElementById('progress-container').classList.remove('hidden');
             document.getElementById('progress-filename').textContent = selectedFile.name;
             
@@ -611,7 +696,8 @@ include 'header.php';
                 return;
             }
         } else {
-            // No new file, just submit form
+            // No new file or link change, just submit form
+            document.getElementById('processingOverlay').classList.remove('hidden');
             document.getElementById('editForm').submit();
         }
     }
@@ -619,7 +705,6 @@ include 'header.php';
     function uploadChunk(formData, index, total) {
         return new Promise((resolve, reject) => {
             const xhr = new XMLHttpRequest();
-            // Path needs to go up to api folder
             xhr.open('POST', '../api/chunk_upload.php', true);
             
             xhr.onload = function() {
@@ -658,13 +743,11 @@ include 'header.php';
     let uploadedImages = [];
     function handleCoverSelect(input) {
         const files = Array.from(input.files);
-        // Add to uploaded array
         files.forEach(file => uploadedImages.push(file));
         
         renderGallery();
         updateInputFiles();
         
-        // Check limits
         const total = currentImageCount + uploadedImages.length;
         if (total >= 5) {
              document.getElementById('max-image-warning').classList.remove('hidden');

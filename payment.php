@@ -5,6 +5,11 @@ require_once 'api/qpay_config.php';
 require_once 'api/qpay_handler.php';
 require_once 'includes/notifications.php'; 
 
+// Brevo Mailer оруулж ирэх
+if (file_exists('admin/api/brevo_admin.php')) {
+    require_once 'admin/api/brevo_admin.php';
+}
+
 if (!isset($_SESSION['user_id'])) {
     $return_url = urlencode($_SERVER['REQUEST_URI']);
     header("Location: login.php?redirect=$return_url");
@@ -125,9 +130,28 @@ if (isset($_GET['action'])) {
                 
                 // Мэдэгдэл илгээх
                 processFilePurchase($pdo, $pending['file_id'], $pending['user_id']);
-                // Худалдагчид мэдэгдэх
+                
+                // Худалдагчид мэдэгдэх (Notification + Email)
                 if ($pending['owner_id'] != $pending['user_id']) {
+                    // 1. Notification (Хонх)
                     sendNotification($pdo, $pending['owner_id'], 'sale', "Таны \"{$file_title}\" файлыг хэрэглэгч худалдаж авлаа. +".number_format($net_income)."₮", "profile/my_files.php");
+                    
+                    // 2. Email (Brevo)
+                    if (function_exists('notifyFileSold')) {
+                        // Худалдагчийн мэйлийг татах
+                        $stmt_owner = $pdo->prepare("SELECT email, username FROM users WHERE id = ?");
+                        $stmt_owner->execute([$pending['owner_id']]);
+                        $owner = $stmt_owner->fetch();
+                        
+                        if ($owner && !empty($owner['email'])) {
+                            try {
+                                notifyFileSold($owner['email'], $owner['username'], $file_title, $net_income);
+                            } catch (Exception $e) {
+                                // Mail error - log only
+                                error_log("File sold mail error: " . $e->getMessage());
+                            }
+                        }
+                    }
                 }
                 
                 unset($_SESSION['pending_file_purchase']);
@@ -216,8 +240,27 @@ if (isset($_GET['action'])) {
                 
                 // Мэдэгдэл
                 processFilePurchase($pdo, $file_id_ajax, $user_id);
+                
+                // Худалдагчид мэдэгдэх (Notification + Email)
                 if ($owner_id != $user_id) {
+                    // 1. Notification (Хонх)
                     sendNotification($pdo, $owner_id, 'sale', "Таны \"{$file_data['title']}\" файлыг хэрэглэгч худалдаж авлаа. +".number_format($net_income)."₮", "profile/my_files.php");
+                    
+                    // 2. Email (Brevo)
+                    if (function_exists('notifyFileSold')) {
+                        // Худалдагчийн мэйлийг татах
+                        $stmt_owner = $pdo->prepare("SELECT email, username FROM users WHERE id = ?");
+                        $stmt_owner->execute([$owner_id]);
+                        $owner = $stmt_owner->fetch();
+                        
+                        if ($owner && !empty($owner['email'])) {
+                            try {
+                                notifyFileSold($owner['email'], $owner['username'], $file_data['title'], $net_income);
+                            } catch (Exception $e) {
+                                error_log("File sold mail error: " . $e->getMessage());
+                            }
+                        }
+                    }
                 }
                 
                 echo json_encode(['success' => true]);
