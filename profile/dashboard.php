@@ -48,12 +48,20 @@ if (!empty($db_avatar)) {
     }
 }
 
-// --- STATS ---
+// --- STATS (NET INCOME CALCULATION) ---
+// Шимтгэл хассан цэвэр орлогыг тооцоолох (Default 10% commission assumed if not stored)
+// Хэрэв гүйлгээ тус бүр дээр шимтгэл хадгалагддаг бол `t.net_amount` гэх мэт багана ашиглах хэрэгтэй.
+// Одоогоор нийт дүнгээс 10% хасаж харуулъя (Жишээ нь 10%).
+$COMMISSION_RATE = 0.10; // 10% Platform fee
+
 $sql_income = "SELECT SUM(t.amount) as total FROM transactions t JOIN files f ON t.file_id = f.id WHERE f.user_id = ? AND t.status = 'success'";
 $stmt = $conn->prepare($sql_income);
 $stmt->bind_param("i", $user_id);
 $stmt->execute();
-$total_income = $stmt->get_result()->fetch_assoc()['total'] ?? 0;
+$gross_income = $stmt->get_result()->fetch_assoc()['total'] ?? 0;
+
+// Цэвэр орлого (Net Income) = Нийт орлого * (1 - 0.10)
+$net_income = $gross_income * (1 - $COMMISSION_RATE);
 
 $sql_files_count = "SELECT COUNT(*) as cnt FROM files WHERE user_id = ? AND status = 'approved'";
 $stmt = $conn->prepare($sql_files_count);
@@ -85,16 +93,17 @@ $current_level_name = $current_level_info['name'];
 $next_level_key = $current_level_info['next'];
 $progress_percent = 0; $needed_amount = 0; $next_level_name = "";
 
+// Level progression based on GROSS or NET? Usually Gross Sales Volume. Let's use Gross.
 if ($next_level_key && isset($levels[$next_level_key])) {
     $next_level_target = $levels[$next_level_key]['min_income'];
     $next_level_name = $levels[$next_level_key]['name'];
     $current_level_min = $current_level_info['min_income'];
     $level_range = $next_level_target - $current_level_min;
-    $current_progress = $total_income - $current_level_min;
+    $current_progress = $gross_income - $current_level_min; // Using Gross Income for Leveling
     
     $progress_percent = ($level_range > 0) ? ($current_progress / $level_range) * 100 : 100;
     $progress_percent = max(0, min(100, $progress_percent));
-    $needed_amount = max(0, $next_level_target - $total_income);
+    $needed_amount = max(0, $next_level_target - $gross_income);
 } else {
     $progress_percent = 100;
     $next_level_name = "Дээд түвшин";
@@ -131,13 +140,25 @@ if ($stmt) {
 
 // Icon Helper
 function getFileIcon($type) {
+    $type = strtolower($type);
     $icons = [
-        'pdf' => 'fa-file-pdf text-red-500', 'doc' => 'fa-file-word text-blue-500', 'docx' => 'fa-file-word text-blue-500',
-        'xls' => 'fa-file-excel text-green-500', 'xlsx' => 'fa-file-excel text-green-500', 'ppt' => 'fa-file-powerpoint text-orange-500', 
-        'zip' => 'fa-file-archive text-yellow-600', 'jpg' => 'fa-file-image text-purple-500', 'png' => 'fa-file-image text-purple-500',
+        'pdf' => 'fa-file-pdf text-red-500', 
+        'doc' => 'fa-file-word text-blue-500', 
+        'docx' => 'fa-file-word text-blue-500',
+        'xls' => 'fa-file-excel text-green-500', 
+        'xlsx' => 'fa-file-excel text-green-500', 
+        'ppt' => 'fa-file-powerpoint text-orange-500', 
+        'pptx' => 'fa-file-powerpoint text-orange-500',
+        'zip' => 'fa-file-archive text-yellow-600', 
+        'rar' => 'fa-file-archive text-yellow-600',
+        'jpg' => 'fa-file-image text-purple-500', 
+        'jpeg' => 'fa-file-image text-purple-500',
+        'png' => 'fa-file-image text-purple-500',
+        'mp3' => 'fa-file-audio text-pink-500',
+        'mp4' => 'fa-file-video text-red-600',
         'other' => 'fa-file text-gray-400'
     ];
-    return $icons[strtolower($type)] ?? 'fa-file text-gray-400';
+    return $icons[$type] ?? 'fa-file text-gray-400';
 }
 
 date_default_timezone_set('Asia/Ulaanbaatar');
@@ -210,12 +231,18 @@ function toggleModal(id) {
 
         <!-- Stats -->
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8 fade-in">
-            <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-                <div class="flex justify-between items-start mb-4">
-                    <div><p class="text-gray-500 text-xs uppercase font-medium">Нийт орлого</p><h3 class="text-2xl font-bold text-gray-900 mt-1"><?php echo number_format($total_income); ?>₮</h3></div>
+            <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden group">
+                <div class="flex justify-between items-start mb-4 relative z-10">
+                    <div>
+                        <p class="text-gray-500 text-xs uppercase font-medium">Цэвэр орлого</p>
+                        <h3 class="text-2xl font-bold text-gray-900 mt-1"><?php echo number_format($net_income); ?>₮</h3>
+                        <p class="text-[10px] text-gray-400 mt-1" title="Шимтгэл хасагдаагүй дүн: <?php echo number_format($gross_income); ?>₮">
+                            Нийт борлуулалт: <?php echo number_format($gross_income); ?>₮
+                        </p>
+                    </div>
                     <div class="w-10 h-10 bg-green-100 text-green-600 rounded-lg flex items-center justify-center"><i class="fas fa-wallet"></i></div>
                 </div>
-                <div class="text-xs text-green-600 font-medium flex items-center gap-1"><i class="fas fa-arrow-up"></i> Өсөлттэй байна</div>
+                <div class="text-xs text-green-600 font-medium flex items-center gap-1"><i class="fas fa-check-circle"></i> Шимтгэл хасагдсан</div>
             </div>
             <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
                 <div class="flex justify-between items-start mb-4">
@@ -246,18 +273,24 @@ function toggleModal(id) {
                 <!-- Recent Sales -->
                 <div class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
                     <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
-                        <h3 class="font-bold text-gray-900 text-sm">Сүүлийн борлуулалт</h3>
+                        <h3 class="font-bold text-gray-900 text-sm">Сүүлийн борлуулалт (Цэвэр ашиг)</h3>
                         <a href="wallet.php" class="text-xs font-medium text-brand-600 hover:text-brand-700">Бүгдийг үзэх</a>
                     </div>
                     <div class="divide-y divide-gray-100">
-                        <?php if ($recent_sales->num_rows > 0): while($sale = $recent_sales->fetch_assoc()): ?>
+                        <?php if ($recent_sales->num_rows > 0): while($sale = $recent_sales->fetch_assoc()): 
+                            // Individual sale net amount (10% fee)
+                            $net_sale_amount = $sale['amount'] * (1 - $COMMISSION_RATE);
+                        ?>
                         <div class="p-4 flex items-center gap-4 hover:bg-gray-50 transition">
                             <div class="w-10 h-10 bg-green-50 text-green-600 rounded-lg flex items-center justify-center flex-shrink-0 font-bold text-xs uppercase"><i class="fas fa-file-invoice-dollar"></i></div>
                             <div class="flex-1 min-w-0">
                                 <h4 class="text-sm font-medium text-gray-900 truncate"><?php echo htmlspecialchars($sale['title']); ?></h4>
                                 <p class="text-xs text-gray-500"><?php echo date('Y-m-d H:i', strtotime($sale['transaction_date'])); ?> • <?php echo htmlspecialchars($sale['username']); ?></p>
                             </div>
-                            <span class="font-bold text-green-600 text-sm">+<?php echo number_format($sale['amount']); ?>₮</span>
+                            <div class="text-right">
+                                <span class="block font-bold text-green-600 text-sm">+<?php echo number_format($net_sale_amount); ?>₮</span>
+                                <span class="text-[10px] text-gray-400 line-through"><?php echo number_format($sale['amount']); ?>₮</span>
+                            </div>
                         </div>
                         <?php endwhile; else: ?><div class="p-6 text-center text-gray-500 text-sm">Одоогоор борлуулалт хийгдээгүй байна.</div><?php endif; ?>
                     </div>
@@ -280,9 +313,11 @@ function toggleModal(id) {
                             <tbody>
                                 <?php if ($my_files->num_rows > 0): while($file = $my_files->fetch_assoc()): ?>
                                 <tr class="bg-white border-b hover:bg-gray-50">
-                                    <td class="px-6 py-4 font-medium text-gray-900 whitespace-nowrap flex items-center gap-2">
-                                        <i class="<?php echo getFileIcon($file['file_type']); ?>"></i>
-                                        <span class="truncate max-w-xs"><?php echo htmlspecialchars($file['title']); ?></span>
+                                    <td class="px-6 py-4 font-medium text-gray-900 whitespace-nowrap flex items-center gap-3">
+                                        <div class="w-8 h-8 rounded bg-gray-100 flex items-center justify-center flex-shrink-0 text-lg">
+                                            <i class="<?php echo getFileIcon($file['file_type']); ?>"></i>
+                                        </div>
+                                        <span class="truncate max-w-xs" title="<?php echo htmlspecialchars($file['title']); ?>"><?php echo htmlspecialchars($file['title']); ?></span>
                                     </td>
                                     <td class="px-6 py-4"><?php echo ($file['price'] > 0) ? number_format($file['price']) . '₮' : '<span class="text-green-600">Үнэгүй</span>'; ?></td>
                                     <td class="px-6 py-4"><?php echo $file['download_count']; ?></td>
@@ -361,7 +396,7 @@ function toggleModal(id) {
                 <div class="cursor-pointer z-50 p-2 text-gray-500 hover:text-gray-700" onclick="toggleModal('levelModal')"><i class="fas fa-times"></i></div>
             </div>
             <div class="my-5 space-y-4">
-                <p class="text-sm text-gray-600 mb-4">Таны нийт орлого: <span class="font-bold text-brand-600"><?php echo number_format($total_income); ?>₮</span></p>
+                <p class="text-sm text-gray-600 mb-4">Таны нийт орлого: <span class="font-bold text-brand-600"><?php echo number_format($gross_income); ?>₮</span></p>
                 <?php foreach($levels as $key => $lvl): 
                     $is_current = ($key === $user_level_key);
                     $border_class = $is_current ? 'border-brand-500 ring-1 ring-brand-500 bg-brand-50' : 'border-gray-200';

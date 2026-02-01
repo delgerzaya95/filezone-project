@@ -20,11 +20,11 @@ $error = '';
 
 // --- 1. HANDLE PROFILE UPDATE ---
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] == 'update_profile') {
-    $full_name = trim($_POST['full_name']);
-    $phone = trim($_POST['phone']);
-    $location = trim($_POST['location']);
+    // FIX: trim(null) Deprecated алдаанаас сэргийлж '?? ""' нэмэв
+    $full_name = trim($_POST['full_name'] ?? '');
+    $phone = trim($_POST['phone'] ?? '');
+    $location = trim($_POST['location'] ?? '');
     
-    // Bio болон Skills хэсгийг хассан тул query-ээс мөн хасна
     // Update Query
     $upd_sql = "UPDATE users SET full_name = ?, phone = ?, location = ? WHERE id = ?";
     $stmt = $conn->prepare($upd_sql);
@@ -39,9 +39,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
 
 // --- 2. HANDLE PASSWORD CHANGE ---
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] == 'change_password') {
-    $current_pass = $_POST['current_password'];
-    $new_pass = $_POST['new_password'];
-    $confirm_pass = $_POST['confirm_password'];
+    $current_pass = $_POST['current_password'] ?? '';
+    $new_pass = $_POST['new_password'] ?? '';
+    $confirm_pass = $_POST['confirm_password'] ?? '';
 
     if (empty($current_pass) || empty($new_pass) || empty($confirm_pass)) {
         $error = "Бүх талбарыг бөглөнө үү.";
@@ -86,7 +86,7 @@ $username = $user_data['username'] ?? 'User';
 $email = $user_data['email'] ?? '';
 
 // Avatar Logic
-$db_avatar = $user_data['avatar_url'];
+$db_avatar = $user_data['avatar_url'] ?? '';
 $avatar = "https://ui-avatars.com/api/?name=" . urlencode($username) . "&background=random&color=fff";
 if (!empty($db_avatar)) {
     if (strpos($db_avatar, 'http') === 0) {
@@ -144,31 +144,29 @@ include 'header.php';
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Хэрэглэгчийн нэр</label>
-                                <input type="text" value="<?php echo htmlspecialchars($user_data['username']); ?>" disabled class="w-full border border-gray-300 rounded-lg p-2.5 bg-gray-100 text-gray-500 cursor-not-allowed">
+                                <input type="text" value="<?php echo htmlspecialchars($user_data['username'] ?? ''); ?>" disabled class="w-full border border-gray-300 rounded-lg p-2.5 bg-gray-100 text-gray-500 cursor-not-allowed">
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Имэйл хаяг</label>
-                                <input type="email" value="<?php echo htmlspecialchars($user_data['email']); ?>" disabled class="w-full border border-gray-300 rounded-lg p-2.5 bg-gray-100 text-gray-500 cursor-not-allowed">
+                                <input type="email" value="<?php echo htmlspecialchars($user_data['email'] ?? ''); ?>" disabled class="w-full border border-gray-300 rounded-lg p-2.5 bg-gray-100 text-gray-500 cursor-not-allowed">
                             </div>
                         </div>
 
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Бүтэн нэр</label>
-                                <input type="text" name="full_name" value="<?php echo htmlspecialchars($user_data['full_name']); ?>" class="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-blue-500 focus:border-blue-500 outline-none">
+                                <input type="text" name="full_name" value="<?php echo htmlspecialchars($user_data['full_name'] ?? ''); ?>" class="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-blue-500 focus:border-blue-500 outline-none">
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Утасны дугаар</label>
-                                <input type="text" name="phone" value="<?php echo htmlspecialchars($user_data['phone']); ?>" class="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-blue-500 focus:border-blue-500 outline-none">
+                                <input type="text" name="phone" value="<?php echo htmlspecialchars($user_data['phone'] ?? ''); ?>" class="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-blue-500 focus:border-blue-500 outline-none">
                             </div>
                         </div>
 
                         <div class="mb-4">
                             <label class="block text-sm font-medium text-gray-700 mb-1">Байршил / Хаяг</label>
-                            <input type="text" name="location" value="<?php echo htmlspecialchars($user_data['location']); ?>" class="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="Улаанбаатар, Монгол">
+                            <input type="text" name="location" value="<?php echo htmlspecialchars($user_data['location'] ?? ''); ?>" class="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-blue-500 focus:border-blue-500 outline-none" placeholder="Улаанбаатар, Монгол">
                         </div>
-
-                        <!-- Bio болон Skills хэсгүүдийг хассан -->
 
                         <div class="flex justify-end mt-6">
                             <button type="submit" class="bg-blue-600 text-white font-medium py-2 px-6 rounded-lg hover:bg-blue-700 transition shadow-sm">

@@ -1,6 +1,8 @@
 <?php
 session_start();
 require_once '../includes/db.php';
+// МЭЙЛ API ДУУДАХ
+require_once 'api/brevo_admin.php'; 
 
 // Админ эрх шалгах
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
@@ -9,10 +11,9 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
 }
 
 // --------------------------------------------------------------------------
-// AJAX HANDLERS (Файл засах, устгах үйлдлүүд)
+// AJAX HANDLERS
 // --------------------------------------------------------------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // JSON хариу бэлдэх функц
     function jsonResponse($success, $message) {
         header('Content-Type: application/json');
         echo json_encode(['success' => $success, 'message' => $message]);
@@ -32,9 +33,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             try {
+                // 1. ФАЙЛЫН ЭЗЭН БОЛОН ХУУЧИН ТӨЛӨВИЙГ АВАХ
+                $stmt_owner = $pdo->prepare("
+                    SELECT f.user_id, f.status as old_status, u.email, u.username 
+                    FROM files f 
+                    JOIN users u ON f.user_id = u.id 
+                    WHERE f.id = ?
+                ");
+                $stmt_owner->execute([$id]);
+                $file_info = $stmt_owner->fetch(PDO::FETCH_ASSOC);
+
+                // 2. UPDATE QUERY
                 $stmt = $pdo->prepare("UPDATE files SET title = ?, status = ?, reject_reason = ? WHERE id = ?");
                 $stmt->execute([$title, $status, $reason, $id]);
-                jsonResponse(true, 'Файлын мэдээлэл шинэчлэгдлээ.');
+
+                // 3. МЭЙЛ ИЛГЭЭХ ЛОГИК
+                if ($file_info && $status !== $file_info['old_status']) {
+                    if ($status === 'approved') {
+                        notifyFileApproved($file_info['email'], $file_info['username'], $title, $id);
+                    } elseif ($status === 'rejected') {
+                        notifyFileRejected($file_info['email'], $file_info['username'], $title, $reason);
+                    }
+                }
+
+                jsonResponse(true, 'Файлын мэдээлэл шинэчлэгдлээ. (Мэйл илгээгдсэн)');
             } catch (PDOException $e) {
                 jsonResponse(false, 'Database error: ' . $e->getMessage());
             }
@@ -44,23 +66,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($_POST['action'] === 'delete_file') {
             $id = intval($_POST['file_id']);
             try {
-                // 1. Файлын мэдээллийг авах (замыг олохын тулд)
                 $stmt = $pdo->prepare("SELECT file_url FROM files WHERE id = ?");
                 $stmt->execute([$id]);
                 $file = $stmt->fetch(PDO::FETCH_ASSOC);
 
                 if ($file) {
-                    // 2. Үндсэн файлыг серверээс устгах
-                    // Админ фолдероос нэг түвшин дээш гараад uploads руу орно: ../uploads/...
                     $file_path = '../' . $file['file_url']; 
                     if (!empty($file['file_url']) && file_exists($file_path)) {
                         unlink($file_path);
                     }
                     
-                    // Хавтас цэвэрлэх бэлтгэл
                     $file_dir = dirname($file_path);
-
-                    // 3. Preview зургуудыг устгах
                     $p_stmt = $pdo->prepare("SELECT preview_url FROM file_previews WHERE file_id = ?");
                     $p_stmt->execute([$id]);
                     $previews = $p_stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -72,16 +88,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         }
                     }
 
-                    // 4. Хоосон хавтаснуудыг устгах
                     $previews_dir = $file_dir . '/previews';
                     if (is_dir($previews_dir)) @rmdir($previews_dir);
                     if (is_dir($file_dir)) @rmdir($file_dir);
 
-                    // 5. DB-ээс устгах
                     $del_stmt = $pdo->prepare("DELETE FROM files WHERE id = ?");
                     $del_stmt->execute([$id]);
                     
-                    jsonResponse(true, 'Файл болон холбогдох өгөгдөл бүрэн устгагдлаа.');
+                    jsonResponse(true, 'Файл бүрэн устгагдлаа.');
                 } else {
                     jsonResponse(false, 'Файл олдсонгүй.');
                 }
@@ -90,7 +104,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
         
-        // GET PREVIEWS (Модал цонхонд зураг харуулах)
+        // GET PREVIEWS
         if ($_POST['action'] === 'get_previews') {
             $id = intval($_POST['file_id']);
             try {
@@ -98,7 +112,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt->execute([$id]);
                 $previews = $stmt->fetchAll(PDO::FETCH_COLUMN);
                 
-                // Замд ../ нэмж өгөх (админ хэсгээс харагдах байдлаар)
                 $formatted_previews = array_map(function($url) {
                     return '../' . $url;
                 }, $previews);
@@ -116,8 +129,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // --------------------------------------------------------------------------
 // DATA FETCHING & FILTERING
 // --------------------------------------------------------------------------
-
-// Pagination Setup
 $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
 $limit = 10;
 $offset = ($page - 1) * $limit;
@@ -126,11 +137,14 @@ $offset = ($page - 1) * $limit;
 $search = isset($_GET['search']) ? trim($_GET['search']) : '';
 $status_filter = isset($_GET['status']) ? $_GET['status'] : '';
 $type_filter = isset($_GET['type']) ? $_GET['type'] : '';
+$date_from = isset($_GET['date_from']) ? $_GET['date_from'] : '';
+$date_to = isset($_GET['date_to']) ? $_GET['date_to'] : '';
 
 // Query Builder
 $where_clauses = ["1=1"];
 $params = [];
 
+// 1. Search
 if ($search) {
     $where_clauses[] = "(f.title LIKE ? OR u.username LIKE ? OR f.id = ?)";
     $params[] = "%$search%";
@@ -138,23 +152,32 @@ if ($search) {
     $params[] = $search;
 }
 
+// 2. Status
 if ($status_filter) {
     $where_clauses[] = "f.status = ?";
     $params[] = $status_filter;
 }
 
+// 3. Type
 if ($type_filter) {
     $where_clauses[] = "f.file_type = ?";
     $params[] = $type_filter;
 }
 
+// 4. Date Range
+if ($date_from) {
+    $where_clauses[] = "DATE(f.upload_date) >= ?";
+    $params[] = $date_from;
+}
+if ($date_to) {
+    $where_clauses[] = "DATE(f.upload_date) <= ?";
+    $params[] = $date_to;
+}
+
 $where_sql = implode(" AND ", $where_clauses);
 
 // Count Total Records
-$count_sql = "SELECT COUNT(*) 
-              FROM files f 
-              LEFT JOIN users u ON f.user_id = u.id 
-              WHERE $where_sql";
+$count_sql = "SELECT COUNT(*) FROM files f LEFT JOIN users u ON f.user_id = u.id WHERE $where_sql";
 $stmt = $pdo->prepare($count_sql);
 $stmt->execute($params);
 $total_records = $stmt->fetchColumn();
@@ -165,32 +188,21 @@ $sql = "SELECT f.*, u.username, u.avatar_url
         FROM files f 
         LEFT JOIN users u ON f.user_id = u.id 
         WHERE $where_sql 
-        ORDER BY f.upload_date DESC 
+        ORDER BY FIELD(f.status, 'pending', 'approved', 'rejected'), f.upload_date DESC 
         LIMIT $limit OFFSET $offset";
 
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $files = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Helper: Format Size
+// Helpers
 function formatSize($bytes) {
-    if ($bytes >= 1073741824) {
-        $bytes = number_format($bytes / 1073741824, 2) . ' GB';
-    } elseif ($bytes >= 1048576) {
-        $bytes = number_format($bytes / 1048576, 2) . ' MB';
-    } elseif ($bytes >= 1024) {
-        $bytes = number_format($bytes / 1024, 2) . ' KB';
-    } elseif ($bytes > 1) {
-        $bytes = $bytes . ' bytes';
-    } elseif ($bytes == 1) {
-        $bytes = $bytes . ' byte';
-    } else {
-        $bytes = '0 bytes';
-    }
-    return $bytes;
+    if ($bytes >= 1073741824) return number_format($bytes / 1073741824, 2) . ' GB';
+    if ($bytes >= 1048576) return number_format($bytes / 1048576, 2) . ' MB';
+    if ($bytes >= 1024) return number_format($bytes / 1024, 2) . ' KB';
+    return $bytes . ' bytes';
 }
 
-// Helper: Get Icon
 function getFileIcon($type) {
     switch ($type) {
         case 'pdf': return 'fa-file-pdf text-red-500';
@@ -250,39 +262,64 @@ function getFileIcon($type) {
             <!-- MAIN BODY -->
             <main class="flex-1 overflow-x-hidden overflow-y-auto p-6">
                 
-                <!-- Filters Bar -->
-                <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6">
-                    <form method="GET" action="" class="flex flex-col md:flex-row gap-4 items-center justify-between">
-                        <div class="flex flex-col md:flex-row gap-4 flex-1 w-full">
-                            <!-- Search -->
-                            <div class="relative flex-1">
+                <!-- Filters Bar (Expanded) -->
+                <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 mb-6">
+                    <form method="GET" action="" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        
+                        <!-- Search -->
+                        <div class="col-span-1 md:col-span-2">
+                            <label class="block text-xs font-semibold text-slate-500 mb-1 uppercase">Хайлт</label>
+                            <div class="relative">
                                 <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 text-sm"></i>
-                                <input type="text" name="search" value="<?php echo htmlspecialchars($search); ?>" placeholder="Файлын нэр, ID эсвэл хэрэглэгчээр хайх..." class="pl-10 pr-4 py-2 w-full border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                                <input type="text" name="search" value="<?php echo htmlspecialchars($search); ?>" placeholder="Файлын нэр, ID, хэрэглэгч..." class="pl-10 pr-4 py-2 w-full border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
                             </div>
-                            
-                            <!-- Status Filter -->
-                            <select name="status" onchange="this.form.submit()" class="border border-slate-300 rounded-lg text-sm px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white text-slate-600">
-                                <option value="">Бүх төлөв</option>
-                                <option value="approved" <?php if($status_filter == 'approved') echo 'selected'; ?>>Зөвшөөрсөн</option>
-                                <option value="pending" <?php if($status_filter == 'pending') echo 'selected'; ?>>Хүлээгдэж буй</option>
-                                <option value="rejected" <?php if($status_filter == 'rejected') echo 'selected'; ?>>Татгалзсан</option>
-                            </select>
+                        </div>
 
-                             <!-- Type Filter -->
-                             <select name="type" onchange="this.form.submit()" class="border border-slate-300 rounded-lg text-sm px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white text-slate-600">
+                        <!-- Status Filter -->
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-500 mb-1 uppercase">Төлөв</label>
+                            <select name="status" class="w-full border border-slate-300 rounded-lg text-sm px-3 py-2 bg-white text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                <option value="">Бүх төлөв</option>
+                                <option value="pending" <?php if($status_filter == 'pending') echo 'selected'; ?>>⏳ Хүлээгдэж буй</option>
+                                <option value="approved" <?php if($status_filter == 'approved') echo 'selected'; ?>>✅ Зөвшөөрсөн</option>
+                                <option value="rejected" <?php if($status_filter == 'rejected') echo 'selected'; ?>>❌ Татгалзсан</option>
+                            </select>
+                        </div>
+
+                         <!-- Type Filter -->
+                         <div>
+                            <label class="block text-xs font-semibold text-slate-500 mb-1 uppercase">Файлын төрөл</label>
+                            <select name="type" class="w-full border border-slate-300 rounded-lg text-sm px-3 py-2 bg-white text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500">
                                 <option value="">Бүх төрөл</option>
                                 <option value="pdf" <?php if($type_filter == 'pdf') echo 'selected'; ?>>PDF</option>
                                 <option value="docx" <?php if($type_filter == 'docx') echo 'selected'; ?>>Word</option>
-                                <option value="zip" <?php if($type_filter == 'zip') echo 'selected'; ?>>ZIP/Archive</option>
+                                <option value="xlsx" <?php if($type_filter == 'xlsx') echo 'selected'; ?>>Excel</option>
+                                <option value="pptx" <?php if($type_filter == 'pptx') echo 'selected'; ?>>PowerPoint</option>
+                                <option value="zip" <?php if($type_filter == 'zip') echo 'selected'; ?>>Archive (ZIP/RAR)</option>
                                 <option value="exe" <?php if($type_filter == 'exe') echo 'selected'; ?>>Software (EXE)</option>
                                 <option value="mp3" <?php if($type_filter == 'mp3') echo 'selected'; ?>>Audio (MP3)</option>
                             </select>
                         </div>
 
-                        <!-- Reset Button -->
-                        <div class="flex items-center gap-2">
-                             <a href="files.php" class="p-2 text-slate-500 hover:text-slate-700 border border-slate-300 rounded-lg bg-white" title="Шинэчлэх">
-                                <i class="fas fa-sync-alt"></i>
+                        <!-- Date From -->
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-500 mb-1 uppercase">Эхлэх огноо</label>
+                            <input type="date" name="date_from" value="<?php echo htmlspecialchars($date_from); ?>" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-600">
+                        </div>
+
+                        <!-- Date To -->
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-500 mb-1 uppercase">Дуусах огноо</label>
+                            <input type="date" name="date_to" value="<?php echo htmlspecialchars($date_to); ?>" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-600">
+                        </div>
+
+                        <!-- Actions -->
+                        <div class="col-span-1 md:col-span-2 flex items-end gap-2">
+                             <button type="submit" class="px-6 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 transition shadow-sm font-medium">
+                                <i class="fas fa-filter mr-1"></i> Шүүх
+                            </button>
+                             <a href="files.php" class="px-4 py-2 text-slate-600 bg-white border border-slate-300 rounded-lg text-sm hover:bg-slate-50 transition font-medium">
+                                <i class="fas fa-undo mr-1"></i> Цэвэрлэх
                             </a>
                         </div>
                     </form>
@@ -331,9 +368,19 @@ function getFileIcon($type) {
                                         <td class="px-6 py-4">
                                             <div class="flex items-center gap-2">
                                                 <?php 
-                                                    $avatar = !empty($file['avatar_url']) ? '../'.$file['avatar_url'] : 'https://ui-avatars.com/api/?name='.urlencode($file['username']).'&background=random&color=fff';
+                                                    $avatar_url = $file['avatar_url'];
+                                                    $avatar_src = '';
+                                                    if (!empty($avatar_url)) {
+                                                        if (strpos($avatar_url, 'http') === 0) {
+                                                            $avatar_src = $avatar_url;
+                                                        } else {
+                                                            $avatar_src = '../' . $avatar_url;
+                                                        }
+                                                    } else {
+                                                        $avatar_src = 'https://ui-avatars.com/api/?name='.urlencode($file['username']).'&background=4F46E5&color=fff&bold=true';
+                                                    }
                                                 ?>
-                                                <img src="<?php echo $avatar; ?>" class="w-6 h-6 rounded-full bg-slate-200">
+                                                <img src="<?php echo $avatar_src; ?>" class="w-6 h-6 rounded-full bg-slate-200 object-cover">
                                                 <span class="text-sm text-slate-600 truncate max-w-[100px]" title="<?php echo htmlspecialchars($file['username']); ?>"><?php echo htmlspecialchars($file['username']); ?></span>
                                             </div>
                                         </td>
@@ -387,20 +434,27 @@ function getFileIcon($type) {
                     <div class="bg-white px-6 py-4 border-t border-slate-200 flex items-center justify-between">
                         <span class="text-sm text-slate-500">Нийт <?php echo $total_records; ?> файлаас <?php echo $offset + 1; ?>-<?php echo min($offset + $limit, $total_records); ?> харагдаж байна</span>
                         <div class="flex items-center gap-1">
+                            <?php 
+                                // Build pagination links preserving all filters
+                                $query_params = $_GET;
+                                function buildPageLink($page, $params) {
+                                    $params['page'] = $page;
+                                    return '?' . http_build_query($params);
+                                }
+                            ?>
+
                             <?php if ($page > 1): ?>
-                                <a href="?page=<?php echo $page - 1; ?>&search=<?php echo urlencode($search); ?>&status=<?php echo urlencode($status_filter); ?>&type=<?php echo urlencode($type_filter); ?>" class="px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50 text-slate-600">Өмнөх</a>
+                                <a href="<?php echo buildPageLink($page - 1, $query_params); ?>" class="px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50 text-slate-600">Өмнөх</a>
                             <?php endif; ?>
 
                             <?php for ($i = 1; $i <= $total_pages; $i++): ?>
-                                <?php if ($i == $page): ?>
-                                    <span class="px-3 py-1 text-sm border border-indigo-500 bg-indigo-50 text-indigo-600 rounded font-medium"><?php echo $i; ?></span>
-                                <?php else: ?>
-                                    <a href="?page=<?php echo $i; ?>&search=<?php echo urlencode($search); ?>&status=<?php echo urlencode($status_filter); ?>&type=<?php echo urlencode($type_filter); ?>" class="px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50 text-slate-600"><?php echo $i; ?></a>
-                                <?php endif; ?>
+                                <a href="<?php echo buildPageLink($i, $query_params); ?>" class="px-3 py-1 text-sm border rounded <?php echo $i == $page ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'; ?>">
+                                    <?php echo $i; ?>
+                                </a>
                             <?php endfor; ?>
 
                             <?php if ($page < $total_pages): ?>
-                                <a href="?page=<?php echo $page + 1; ?>&search=<?php echo urlencode($search); ?>&status=<?php echo urlencode($status_filter); ?>&type=<?php echo urlencode($type_filter); ?>" class="px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50 text-slate-600">Дараах</a>
+                                <a href="<?php echo buildPageLink($page + 1, $query_params); ?>" class="px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50 text-slate-600">Дараах</a>
                             <?php endif; ?>
                         </div>
                     </div>

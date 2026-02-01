@@ -22,6 +22,18 @@ if (function_exists('mb_internal_encoding')) {
     mb_internal_encoding("UTF-8");
 }
 
+// ASSETS PATH DEFINITION
+// Web path (browser-д харагдах зам) - Absolute path from domain root is safest
+$assets_web_path = '/assets'; 
+
+// System path (server дээр файл байгаа эсэхийг шалгах зам)
+// __DIR__ returns /path/to/profile. So ../assets means /path/to/assets
+$assets_sys_path = realpath(__DIR__ . '/../assets');
+// Fallback if realpath fails (e.g. symlinks or permissions)
+if (!$assets_sys_path) {
+    $assets_sys_path = __DIR__ . '/../assets';
+}
+
 // --- HELPER FUNCTIONS FOR HEADER ---
 
 if (!function_exists('getHeaderRandomColor')) {
@@ -134,8 +146,24 @@ if (isset($_SESSION['user_id'])) {
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="../assets/css/style.css">
-    <script src="../assets/js/tailwind-config.js"></script>
+    
+    <!-- CSS - Using absolute path check logic -->
+    <?php
+        $cssFile = '/css/style.css';
+        $cssWeb = $assets_web_path . $cssFile;
+        $cssSys = $assets_sys_path . $cssFile;
+        $cssVer = file_exists($cssSys) ? filemtime($cssSys) : time();
+    ?>
+    <link rel="stylesheet" href="<?php echo $cssWeb; ?>?v=<?php echo $cssVer; ?>">
+    
+    <!-- Tailwind Config - Using absolute path check logic -->
+    <?php
+        $jsConfig = '/js/tailwind-config.js';
+        $jsConfigWeb = $assets_web_path . $jsConfig;
+        $jsConfigSys = $assets_sys_path . $jsConfig;
+        $jsConfigVer = file_exists($jsConfigSys) ? filemtime($jsConfigSys) : time();
+    ?>
+    <script src="<?php echo $jsConfigWeb; ?>?v=<?php echo $jsConfigVer; ?>"></script>
 
     <style>
         .notif-scroll::-webkit-scrollbar { width: 6px; }
@@ -241,9 +269,6 @@ if (isset($_SESSION['user_id'])) {
                                                     if (isset($notif['type']) && $notif['type'] == 'error') $icon = 'fas fa-times-circle text-red-500';
                                                     
                                                     // ЗАМЫН ЗАСВАР (LINK FIX): 
-                                                    // DB дотор линк нь "profile/dashboard.php" эсвэл "service-details.php" гэж байгаа.
-                                                    // Бид profile/ хавтас дотор байгаа тул эхлээд "../" залгах хэрэгтэй.
-                                                    // Хэрэв линк http-ээр эхэлсэн бол өөрчлөхгүй.
                                                     $rawLink = $notif['link'] ?? '#';
                                                     $fixedLink = (strpos($rawLink, 'http') === 0) ? $rawLink : '../' . $rawLink;
                                                 ?>
@@ -382,3 +407,13 @@ if (isset($_SESSION['user_id'])) {
             });
         }
     </script>
+    
+    <!-- MAIN JS LINKED HERE FOR ALL PROFILE PAGES -->
+    <?php
+        // Using System Path Logic for Main.js as well
+        $mainJsFile = '/js/main.js';
+        $mainJsWeb = $assets_web_path . $mainJsFile;
+        $mainJsSys = $assets_sys_path . $mainJsFile;
+        $mainJsVer = file_exists($mainJsSys) ? filemtime($mainJsSys) : time();
+    ?>
+    <script src="<?php echo $mainJsWeb; ?>?v=<?php echo $mainJsVer; ?>"></script>

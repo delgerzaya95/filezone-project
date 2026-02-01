@@ -1,0 +1,24 @@
+ADMIN EMAIL - DT: 2026-01-13 19:05:45
+To: giamia999@gmail.com
+Subject: Таны файл зөвшөөрөгдлөө! - Filezone.mn
+Response: {"messageId":"<202601131105.43867630097@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+ADMIN EMAIL - DT: 2026-01-13 19:07:10
+To: giamia999@gmail.com
+Subject: Таны файл буцаагдлаа - Filezone.mn
+Response: {"messageId":"<202601131107.77724121443@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+ADMIN EMAIL - DT: 2026-01-13 19:15:37
+To: giamia999@gmail.com
+Subject: Таны үйлчилгээ буцаагдлаа - Filezone.mn
+Response: {"messageId":"<202601131115.15341833049@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+ADMIN EMAIL - DT: 2026-01-13 19:16:08
+To: giamia999@gmail.com
+Subject: Таны үйлчилгээ нийтлэгдлээ! - Filezone.mn
+Response: {"messageId":"<202601131116.99027248256@smtp-relay.mailin.fr>"}
+
+-----------------------------------

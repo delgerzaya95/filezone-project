@@ -100,7 +100,7 @@ function processServicePurchase($pdo, $service_id, $buyer_id) {
                 $seller_id,          
                 'order',             
                 "Шинэ захиалга! \"{$title}\" үйлчилгээнд захиалга ирлээ. Үнэ: " . number_format($price) . "₮", 
-                "profile/service_orders.php?id={$order_id}" // Гүйцэтгэгчийн захиалга удирдах хэсэг
+                "profile/my_orders.php?id={$order_id}" // Гүйцэтгэгчийн захиалга удирдах хэсэг
             );
         }
 

@@ -4,6 +4,8 @@ require_once 'includes/db.php';
 require_once 'api/qpay_config.php';
 require_once 'api/qpay_handler.php';
 require_once 'includes/notifications.php'; 
+// Brevo Email Handler оруулж ирэх
+require_once 'admin/api/brevo_admin.php';
 
 if (!isset($_SESSION['user_id'])) {
     $return_url = urlencode($_SERVER['REQUEST_URI']);
@@ -12,6 +14,7 @@ if (!isset($_SESSION['user_id'])) {
 }
 
 $user_id = $_SESSION['user_id'];
+$COMMISSION_RATE = 0.10; // 10% шимтгэл
 
 // ===================================================================
 //  AJAX HANDLERS (Service Specific)
@@ -32,8 +35,6 @@ if (isset($_GET['action'])) {
         $user_data = $stmt_u->fetch(PDO::FETCH_ASSOC);
 
         if ($service_data && $user_data) {
-            // QPay-д дамжуулах үнэ (Эхлэх үнээр тооцож байна)
-            // Бодит системд хэрэглэгч багц сонгосон бол тэр үнийг авна
             $service_data['price'] = $service_data['price_min']; 
 
             $invoice_response = create_qpay_invoice($service_data, $user_data);
@@ -70,56 +71,60 @@ if (isset($_GET['action'])) {
             try {
                 $pdo->beginTransaction();
 
-                // Давхар гүйлгээ шалгах
-                // Бид transactions хүснэгтэд service_order_id баганаар шалгахын оронд
-                // type='service_order' ба file_id (service_id)-аар шалгана.
-                $stmt_check = $pdo->prepare("SELECT id FROM transactions WHERE user_id = ? AND file_id = ? AND type = 'service_order' AND status = 'success'");
-                $stmt_check->execute([$pending['user_id'], $pending['service_id']]);
-                
-                if ($stmt_check->rowCount() > 0) {
-                    $pdo->commit();
-                    unset($_SESSION['pending_service_purchase']);
-                    echo json_encode(['success' => true, 'message' => 'Already paid.']);
-                    exit;
-                }
-
-                // 1. Transaction бүртгэх (file_id багананд service_id хадгална)
-                $txn_num = 'QPAY-' . date('Ymd') . '-' . rand(1000, 9999);
-                $stmt_trx = $pdo->prepare("INSERT INTO transactions (transaction_number, user_id, file_id, amount, payment_method, status, type, transaction_date) VALUES (?, ?, ?, ?, 'qpay', 'success', 'service_order', NOW())");
-                $stmt_trx->execute([$txn_num, $pending['user_id'], $pending['service_id'], $pending['price']]);
-                $transaction_id = $pdo->lastInsertId();
-
-                // 2. Pending Balance нэмэх
-                $stmt_add = $pdo->prepare("UPDATE users SET pending_balance = pending_balance + ? WHERE id = ?");
-                $stmt_add->execute([$pending['price'], $pending['owner_id']]);
-
-                // 3. Service Order үүсгэх & Мэдэгдэл илгээх (Бүгдийг processServicePurchase хийнэ)
-                // АНХААР: processServicePurchase нь дотроо service_orders руу INSERT хийдэг.
-                // Гэхдээ transaction_id update хийхийн тулд бидэнд order_id хэрэгтэй.
-                // Тиймээс processServicePurchase функцийг бага зэрэг өөрчилж order_id буцаадаг болгох эсвэл энд гараар хийх хэрэгтэй.
-                // Энд гараар хийгээд мэдэгдлийг тусад нь явуулъя.
-
-                $stmt_ord = $pdo->prepare("INSERT INTO service_orders (service_id, buyer_id, seller_id, price, status, ordered_at) VALUES (?, ?, ?, ?, 'active', NOW())");
+                // 1. Service Order үүсгэх
+                $stmt_ord = $pdo->prepare("INSERT INTO service_orders (service_id, buyer_id, seller_id, price, status, ordered_at) VALUES (?, ?, ?, ?, 'pending', NOW())");
                 $stmt_ord->execute([$pending['service_id'], $pending['user_id'], $pending['owner_id'], $pending['price']]);
                 $order_id = $pdo->lastInsertId();
 
-                // Transaction дээр order_id-г шинэчлэх
-                $pdo->prepare("UPDATE transactions SET service_order_id = ? WHERE id = ?")->execute([$order_id, $transaction_id]);
+                // 2. Transaction (System Log) - QPAY payment
+                $txn_num = 'QPAY-' . date('Ymd') . '-' . rand(1000, 9999);
+                $stmt_trx = $pdo->prepare("INSERT INTO transactions (transaction_number, user_id, file_id, service_order_id, amount, payment_method, status, type, transaction_date) VALUES (?, ?, NULL, ?, ?, 'qpay', 'success', 'service_order', NOW())");
+                $stmt_trx->execute([$txn_num, $pending['user_id'], $order_id, $pending['price']]);
+                
+                // 3. Seller Income (Шимтгэл хассан дүн)
+                $net_amount = $pending['price'] * (1 - $COMMISSION_RATE);
+                
+                // Update Seller Pending Balance (users.pending_balance руу орно - Захиалга дуустал хүлээгдэх)
+                $stmt_add = $pdo->prepare("UPDATE users SET pending_balance = pending_balance + ? WHERE id = ?");
+                $stmt_add->execute([$net_amount, $pending['owner_id']]);
+
+                // 4. User Transaction (Seller History) - Sale Record
+                $ut_txn_num_sell = 'SALE-' . date('Ymd') . '-' . rand(1000, 9999);
+                $stmt_ut_sell = $pdo->prepare("INSERT INTO user_transactions (transaction_number, user_id, type, amount, description, transaction_date, file_id, service_id) VALUES (?, ?, 'sale', ?, ?, NOW(), NULL, ?)");
+                $desc_sell = "Үйлчилгээний орлого (ID: #$order_id) - Хүлээгдэж буй";
+                $stmt_ut_sell->execute([$ut_txn_num_sell, $pending['owner_id'], $net_amount, $desc_sell, $pending['service_id']]);
+
+                // 5. User Transaction (Buyer History) - Purchase Record
+                $ut_txn_num_buy = 'PUR-' . date('Ymd') . '-' . rand(1000, 9999);
+                $stmt_ut_buy = $pdo->prepare("INSERT INTO user_transactions (transaction_number, user_id, type, amount, description, transaction_date, file_id, service_id) VALUES (?, ?, 'purchase', ?, ?, NOW(), NULL, ?)");
+                
+                // Fetch service title for description
+                $stmt_title = $pdo->prepare("SELECT title FROM services WHERE id = ?");
+                $stmt_title->execute([$pending['service_id']]);
+                $svc_title = $stmt_title->fetchColumn();
+                
+                $desc_buy = "Үйлчилгээ худалдан авалт (QPay): " . $svc_title;
+                $stmt_ut_buy->execute([$ut_txn_num_buy, $pending['user_id'], $pending['price'], $desc_buy, $pending['service_id']]);
 
                 $pdo->commit();
 
-                // Мэдэгдэл илгээх (зөвхөн notify хийнэ, дахин insert хийхгүй)
-                // Бид processServicePurchase-ийг өөрчлөхгүйгээр, шууд sendNotification ашиглая.
-                
-                // Fetch service title
-                $svc_title = $pdo->query("SELECT title FROM services WHERE id = {$pending['service_id']}")->fetchColumn();
-                
-                // Buyer Notif
+                // Мэдэгдэл (System Notification)
                 sendNotification($pdo, $pending['user_id'], 'success', "Та \"{$svc_title}\" үйлчилгээг амжилттай захиаллаа. Захиалгын ID: #{$order_id}", "profile/my_orders.php?id={$order_id}");
                 
-                // Seller Notif
                 if ($pending['owner_id'] != $pending['user_id']) {
-                    sendNotification($pdo, $pending['owner_id'], 'order', "Шинэ захиалга! \"{$svc_title}\" үйлчилгээнд захиалга ирлээ.", "profile/service_orders.php?id={$order_id}");
+                    sendNotification($pdo, $pending['owner_id'], 'order', "Шинэ захиалга! \"{$svc_title}\" үйлчилгээнд захиалга ирлээ. Орлого: " . number_format($net_amount) . "₮ (Хүлээгдэж буй)", "profile/service_orders.php?id={$order_id}");
+
+                    // ==========================================
+                    // BREVO EMAIL NOTIFICATION (QPAY)
+                    // ==========================================
+                    $stmt_seller = $pdo->prepare("SELECT email, username FROM users WHERE id = ?");
+                    $stmt_seller->execute([$pending['owner_id']]);
+                    $seller = $stmt_seller->fetch(PDO::FETCH_ASSOC);
+
+                    if ($seller && !empty($seller['email'])) {
+                        // Шинэ функц дуудах
+                        notifyNewOrder($seller['email'], $seller['username'], $svc_title, $order_id, $net_amount);
+                    }
                 }
 
                 unset($_SESSION['pending_service_purchase']);
@@ -161,30 +166,56 @@ if (isset($_GET['action'])) {
             try {
                 $pdo->beginTransaction();
                 
-                // Deduct & Add
-                $pdo->prepare("UPDATE users SET balance = balance - ? WHERE id = ?")->execute([$price, $user_id]);
-                $pdo->prepare("UPDATE users SET pending_balance = pending_balance + ? WHERE id = ?")->execute([$price, $owner_id]);
-
-                // Transaction
-                $txn_num = 'BAL-' . date('Ymd') . '-' . rand(1000, 9999);
-                $stmt_trx = $pdo->prepare("INSERT INTO transactions (transaction_number, user_id, file_id, amount, payment_method, status, type, transaction_date) VALUES (?, ?, ?, ?, 'balance', 'success', 'service_order', NOW())");
-                $stmt_trx->execute([$txn_num, $user_id, $service_id, $price]);
-                $transaction_id = $pdo->lastInsertId();
-
-                // Order Create
-                $stmt_ord = $pdo->prepare("INSERT INTO service_orders (service_id, buyer_id, seller_id, price, status, ordered_at) VALUES (?, ?, ?, ?, 'active', NOW())");
+                // 1. Service Order үүсгэх
+                $stmt_ord = $pdo->prepare("INSERT INTO service_orders (service_id, buyer_id, seller_id, price, status, ordered_at) VALUES (?, ?, ?, ?, 'pending', NOW())");
                 $stmt_ord->execute([$service_id, $user_id, $owner_id, $price]);
                 $order_id = $pdo->lastInsertId();
 
-                // Link Transaction
-                $pdo->prepare("UPDATE transactions SET service_order_id = ? WHERE id = ?")->execute([$order_id, $transaction_id]);
+                // 2. Money Transfer
+                // Deduct from Buyer
+                $pdo->prepare("UPDATE users SET balance = balance - ? WHERE id = ?")->execute([$price, $user_id]);
+                
+                $net_amount = $price * (1 - $COMMISSION_RATE);
+                
+                // Add to Seller (Pending balance - Захиалга дуустал хүлээгдэх)
+                $pdo->prepare("UPDATE users SET pending_balance = pending_balance + ? WHERE id = ?")->execute([$net_amount, $owner_id]);
+
+                // 3. Transaction (Main Log)
+                $txn_num = 'BAL-' . date('Ymd') . '-' . rand(1000, 9999);
+                $stmt_trx = $pdo->prepare("INSERT INTO transactions (transaction_number, user_id, file_id, service_order_id, amount, payment_method, status, type, transaction_date) VALUES (?, ?, NULL, ?, ?, 'balance', 'success', 'service_order', NOW())");
+                $stmt_trx->execute([$txn_num, $user_id, $order_id, $price]);
+
+                // 4. User Transaction (Buyer History) - Purchase Record
+                $ut_txn_num_buy = 'PUR-' . date('Ymd') . '-' . rand(1000, 9999);
+                $stmt_ut_buy = $pdo->prepare("INSERT INTO user_transactions (transaction_number, user_id, type, amount, description, transaction_date, file_id, service_id) VALUES (?, ?, 'purchase', ?, ?, NOW(), NULL, ?)");
+                $desc_buy = "Үйлчилгээ худалдан авалт: " . $service_data['title'];
+                $stmt_ut_buy->execute([$ut_txn_num_buy, $user_id, $price, $desc_buy, $service_id]);
+
+                // 5. User Transaction (Seller History) - Sale Record
+                $ut_txn_num_sell = 'SALE-' . date('Ymd') . '-' . rand(1000, 9999);
+                $stmt_ut_sell = $pdo->prepare("INSERT INTO user_transactions (transaction_number, user_id, type, amount, description, transaction_date, file_id, service_id) VALUES (?, ?, 'sale', ?, ?, NOW(), NULL, ?)");
+                $desc_sell = "Үйлчилгээний орлого (ID: #$order_id) - Хүлээгдэж буй";
+                $stmt_ut_sell->execute([$ut_txn_num_sell, $owner_id, $net_amount, $desc_sell, $service_id]);
 
                 $pdo->commit();
 
                 // Notifications
                 sendNotification($pdo, $user_id, 'success', "Та \"{$service_data['title']}\" үйлчилгээг амжилттай захиаллаа. Захиалгын ID: #{$order_id}", "profile/my_orders.php?id={$order_id}");
+                
                 if ($owner_id != $user_id) {
-                    sendNotification($pdo, $owner_id, 'order', "Шинэ захиалга! \"{$service_data['title']}\" үйлчилгээнд захиалга ирлээ.", "profile/service_orders.php?id={$order_id}");
+                    sendNotification($pdo, $owner_id, 'order', "Шинэ захиалга! \"{$service_data['title']}\" үйлчилгээнд захиалга ирлээ. Орлого: " . number_format($net_amount) . "₮ (Хүлээгдэж буй)", "profile/my_orders.php?id={$order_id}");
+
+                    // ==========================================
+                    // BREVO EMAIL NOTIFICATION (BALANCE)
+                    // ==========================================
+                    $stmt_seller = $pdo->prepare("SELECT email, username FROM users WHERE id = ?");
+                    $stmt_seller->execute([$owner_id]);
+                    $seller = $stmt_seller->fetch(PDO::FETCH_ASSOC);
+
+                    if ($seller && !empty($seller['email'])) {
+                        // Шинэ функц дуудах
+                        notifyNewOrder($seller['email'], $seller['username'], $service_data['title'], $order_id, $net_amount);
+                    }
                 }
 
                 echo json_encode(['success' => true]);

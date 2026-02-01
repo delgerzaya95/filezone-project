@@ -63,6 +63,8 @@ if (isset($_GET['status_id']) && isset($_GET['new_status'])) {
 $search = $_GET['search'] ?? '';
 $role_filter = $_GET['role'] ?? '';
 $status_filter = $_GET['status'] ?? '';
+$date_from = $_GET['date_from'] ?? '';
+$date_to = $_GET['date_to'] ?? '';
 
 $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
 $limit = 10;
@@ -72,6 +74,7 @@ $offset = ($page - 1) * $limit;
 $where_clauses = ["1=1"];
 $params = [];
 
+// 1. Text Search
 if (!empty($search)) {
     $where_clauses[] = "(username LIKE ? OR email LIKE ? OR phone LIKE ?)";
     $params[] = "%$search%";
@@ -79,14 +82,26 @@ if (!empty($search)) {
     $params[] = "%$search%";
 }
 
+// 2. Role Filter
 if (!empty($role_filter)) {
     $where_clauses[] = "role = ?";
     $params[] = $role_filter;
 }
 
+// 3. Status Filter
 if (!empty($status_filter)) {
     $where_clauses[] = "status = ?";
     $params[] = $status_filter;
+}
+
+// 4. Date Range Filter (join_date)
+if (!empty($date_from)) {
+    $where_clauses[] = "DATE(join_date) >= ?";
+    $params[] = $date_from;
+}
+if (!empty($date_to)) {
+    $where_clauses[] = "DATE(join_date) <= ?";
+    $params[] = $date_to;
 }
 
 $where_sql = implode(' AND ', $where_clauses);
@@ -99,7 +114,7 @@ $total_rows = $stmt->fetchColumn();
 $total_pages = ceil($total_rows / $limit);
 
 // Татах
-$sql = "SELECT * FROM users WHERE $where_sql ORDER BY created_at DESC LIMIT $limit OFFSET $offset";
+$sql = "SELECT * FROM users WHERE $where_sql ORDER BY join_date DESC LIMIT $limit OFFSET $offset";
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $users = $stmt->fetchAll();
@@ -158,36 +173,63 @@ $users = $stmt->fetchAll();
                     <?php unset($_SESSION['error']); ?>
                 <?php endif; ?>
 
-                <!-- Filters Bar -->
-                <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <form method="GET" class="flex flex-col md:flex-row gap-4 flex-1">
-                        <div class="relative flex-1 max-w-md">
-                            <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 text-sm"></i>
-                            <input type="text" name="search" value="<?php echo htmlspecialchars($search); ?>" placeholder="Нэр, Имэйл эсвэл Утас..." class="pl-10 pr-4 py-2 w-full border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                <!-- Filters Bar (Expanded Grid) -->
+                <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 mb-6">
+                    <form method="GET" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        
+                        <!-- Search -->
+                        <div class="col-span-1 md:col-span-2">
+                            <label class="block text-xs font-semibold text-slate-500 mb-1 uppercase">Хайлт</label>
+                            <div class="relative">
+                                <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 text-sm"></i>
+                                <input type="text" name="search" value="<?php echo htmlspecialchars($search); ?>" placeholder="Нэр, Имэйл эсвэл Утас..." class="pl-10 pr-4 py-2 w-full border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                            </div>
                         </div>
                         
-                        <select name="role" class="border border-slate-300 rounded-lg text-sm px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white text-slate-600">
-                            <option value="">Бүх үүрэг</option>
-                            <option value="admin" <?php echo $role_filter == 'admin' ? 'selected' : ''; ?>>Администратор</option>
-                            <option value="moderator" <?php echo $role_filter == 'moderator' ? 'selected' : ''; ?>>Модератор</option>
-                            <option value="user" <?php echo $role_filter == 'user' ? 'selected' : ''; ?>>Хэрэглэгч</option>
-                        </select>
+                        <!-- Role Filter -->
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-500 mb-1 uppercase">Үүрэг</label>
+                            <select name="role" class="w-full border border-slate-300 rounded-lg text-sm px-3 py-2 bg-white text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                <option value="">Бүх үүрэг</option>
+                                <option value="admin" <?php echo $role_filter == 'admin' ? 'selected' : ''; ?>>Администратор</option>
+                                <option value="moderator" <?php echo $role_filter == 'moderator' ? 'selected' : ''; ?>>Модератор</option>
+                                <option value="user" <?php echo $role_filter == 'user' ? 'selected' : ''; ?>>Хэрэглэгч</option>
+                            </select>
+                        </div>
 
-                        <select name="status" class="border border-slate-300 rounded-lg text-sm px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white text-slate-600">
-                            <option value="">Бүх төлөв</option>
-                            <option value="active" <?php echo $status_filter == 'active' ? 'selected' : ''; ?>>Идэвхтэй</option>
-                            <option value="suspended" <?php echo $status_filter == 'suspended' ? 'selected' : ''; ?>>Түр хаасан</option>
-                            <option value="banned" <?php echo $status_filter == 'banned' ? 'selected' : ''; ?>>Бандуулсан</option>
-                        </select>
+                        <!-- Status Filter -->
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-500 mb-1 uppercase">Төлөв</label>
+                            <select name="status" class="w-full border border-slate-300 rounded-lg text-sm px-3 py-2 bg-white text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                <option value="">Бүх төлөв</option>
+                                <option value="active" <?php echo $status_filter == 'active' ? 'selected' : ''; ?>>✅ Идэвхтэй</option>
+                                <option value="suspended" <?php echo $status_filter == 'suspended' ? 'selected' : ''; ?>>⏸ Түр хаасан</option>
+                                <option value="banned" <?php echo $status_filter == 'banned' ? 'selected' : ''; ?>>❌ Бандуулсан</option>
+                            </select>
+                        </div>
 
-                        <button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 transition">Шүүх</button>
+                        <!-- Date From -->
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-500 mb-1 uppercase">Эхлэх огноо</label>
+                            <input type="date" name="date_from" value="<?php echo htmlspecialchars($date_from); ?>" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-600">
+                        </div>
+
+                        <!-- Date To -->
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-500 mb-1 uppercase">Дуусах огноо</label>
+                            <input type="date" name="date_to" value="<?php echo htmlspecialchars($date_to); ?>" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-600">
+                        </div>
+
+                        <!-- Actions -->
+                        <div class="col-span-1 md:col-span-2 flex items-end gap-2">
+                            <button type="submit" class="px-6 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 transition shadow-sm font-medium">
+                                <i class="fas fa-filter mr-1"></i> Шүүх
+                            </button>
+                            <a href="users.php" class="px-4 py-2 text-slate-600 bg-white border border-slate-300 rounded-lg text-sm hover:bg-slate-50 transition font-medium">
+                                <i class="fas fa-undo mr-1"></i> Цэвэрлэх
+                            </a>
+                        </div>
                     </form>
-
-                    <div class="flex items-center gap-2">
-                        <button class="p-2 text-slate-500 hover:text-slate-700 border border-slate-300 rounded-lg bg-white" title="Шинэчлэх" onclick="window.location.reload();">
-                            <i class="fas fa-sync-alt"></i>
-                        </button>
-                    </div>
                 </div>
 
                 <!-- Users Table -->
@@ -210,10 +252,18 @@ $users = $stmt->fetchAll();
                                 <?php if (count($users) > 0): ?>
                                     <?php foreach ($users as $user): ?>
                                     <?php
-                                        // AVATAR LOGIC
+                                        // IMPROVED AVATAR LOGIC
                                         $avatarSrc = 'https://ui-avatars.com/api/?name=' . urlencode($user['username']) . '&background=random&color=fff';
-                                        if (!empty($user['avatar_url']) && file_exists('../' . $user['avatar_url'])) {
-                                            $avatarSrc = '../' . $user['avatar_url'];
+                                        
+                                        if (!empty($user['avatar_url'])) {
+                                            // Check if it's a full URL (Google/Facebook/External)
+                                            if (strpos($user['avatar_url'], 'http') === 0) {
+                                                $avatarSrc = $user['avatar_url'];
+                                            } 
+                                            // Else assume it's a local file
+                                            elseif (file_exists('../' . $user['avatar_url'])) {
+                                                $avatarSrc = '../' . $user['avatar_url'];
+                                            }
                                         }
                                         
                                         $userData = htmlspecialchars(json_encode($user), ENT_QUOTES, 'UTF-8');
@@ -237,7 +287,7 @@ $users = $stmt->fetchAll();
                                             </span>
                                         </td>
                                         <td class="px-6 py-4">
-                                            <span class="text-sm text-slate-600"><?php echo date('Y-m-d', strtotime($user['created_at'])); ?></span>
+                                            <span class="text-sm text-slate-600"><?php echo date('Y-m-d', strtotime($user['join_date'])); ?></span>
                                         </td>
                                         <td class="px-6 py-4 user-status-cell">
                                             <?php if($user['status'] == 'active'): ?>
@@ -257,6 +307,11 @@ $users = $stmt->fetchAll();
                                         <td class="px-6 py-4 text-right">
                                             <div class="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                                                 
+                                                <!-- NEW: EMAIL BUTTON -->
+                                                <a href="send_email.php?email=<?php echo urlencode($user['email']); ?>&name=<?php echo urlencode($user['username']); ?>" class="p-1.5 text-slate-400 hover:text-green-600 rounded hover:bg-green-50 transition" title="Мэйл илгээх">
+                                                    <i class="fas fa-envelope"></i>
+                                                </a>
+
                                                 <button onclick='openViewUserModal(<?php echo $userData; ?>)' class="p-1.5 text-slate-400 hover:text-blue-600 rounded hover:bg-blue-50 transition" title="Дэлгэрэнгүй харах">
                                                     <i class="fas fa-eye"></i>
                                                 </button>
@@ -308,18 +363,27 @@ $users = $stmt->fetchAll();
                     <div class="bg-white px-6 py-4 border-t border-slate-200 flex items-center justify-between">
                         <span class="text-sm text-slate-500">Нийт <?php echo $total_rows; ?> хэрэглэгчээс <?php echo $offset + 1; ?>-<?php echo min($offset + $limit, $total_rows); ?> харагдаж байна</span>
                         <div class="flex items-center gap-1">
+                            <?php 
+                                // Pagination links
+                                $query_params = $_GET;
+                                function buildPageLink($page, $params) {
+                                    $params['page'] = $page;
+                                    return '?' . http_build_query($params);
+                                }
+                            ?>
+
                             <?php if($page > 1): ?>
-                                <a href="?page=<?php echo $page - 1; ?>&search=<?php echo urlencode($search); ?>&role=<?php echo urlencode($role_filter); ?>&status=<?php echo urlencode($status_filter); ?>" class="px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50 text-slate-600">Өмнөх</a>
+                                <a href="<?php echo buildPageLink($page - 1, $query_params); ?>" class="px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50 text-slate-600">Өмнөх</a>
                             <?php endif; ?>
 
                             <?php for($i = 1; $i <= $total_pages; $i++): ?>
-                                <a href="?page=<?php echo $i; ?>&search=<?php echo urlencode($search); ?>&role=<?php echo urlencode($role_filter); ?>&status=<?php echo urlencode($status_filter); ?>" class="px-3 py-1 text-sm border <?php echo $i == $page ? 'border-indigo-500 bg-indigo-50 text-indigo-600 font-medium' : 'border-slate-300 rounded hover:bg-slate-50 text-slate-600'; ?> rounded">
+                                <a href="<?php echo buildPageLink($i, $query_params); ?>" class="px-3 py-1 text-sm border <?php echo $i == $page ? 'border-indigo-500 bg-indigo-50 text-indigo-600 font-medium' : 'border-slate-300 rounded hover:bg-slate-50 text-slate-600'; ?> rounded">
                                     <?php echo $i; ?>
                                 </a>
                             <?php endfor; ?>
 
                             <?php if($page < $total_pages): ?>
-                                <a href="?page=<?php echo $page + 1; ?>&search=<?php echo urlencode($search); ?>&role=<?php echo urlencode($role_filter); ?>&status=<?php echo urlencode($status_filter); ?>" class="px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50 text-slate-600">Дараах</a>
+                                <a href="<?php echo buildPageLink($page + 1, $query_params); ?>" class="px-3 py-1 text-sm border border-slate-300 rounded hover:bg-slate-50 text-slate-600">Дараах</a>
                             <?php endif; ?>
                         </div>
                     </div>
@@ -413,9 +477,15 @@ $users = $stmt->fetchAll();
         document.getElementById('viewUsername').textContent = user.username || '-';
         document.getElementById('viewUserRole').textContent = user.role || 'User';
         
+        // Correct Avatar Logic for Modal (Matches PHP logic)
         let avatarSrc = 'https://ui-avatars.com/api/?name=' + encodeURIComponent(user.username) + '&background=random&color=fff';
-        if (user.avatar_url && user.avatar_url !== '' && user.avatar_url !== null) {
-            avatarSrc = '../' + user.avatar_url; 
+        
+        if (user.avatar_url && user.avatar_url.trim() !== '') {
+            if (user.avatar_url.startsWith('http')) {
+                avatarSrc = user.avatar_url; // Use external URL as is
+            } else {
+                avatarSrc = '../' + user.avatar_url; // Prepend path for local files
+            }
         }
         document.getElementById('viewUserAvatar').src = avatarSrc;
 
@@ -428,7 +498,7 @@ $users = $stmt->fetchAll();
         document.getElementById('viewEmail').textContent = user.email || '-';
         document.getElementById('viewPhone').textContent = user.phone || 'Бүртгэлгүй';
         
-        const joinDate = user.created_at ? new Date(user.created_at).toLocaleDateString('mn-MN') : '-';
+        const joinDate = user.join_date ? new Date(user.join_date).toLocaleDateString('mn-MN') : '-';
         document.getElementById('viewJoinDate').textContent = joinDate;
         
         document.getElementById('viewLastActive').textContent = user.last_active ? new Date(user.last_active).toLocaleString('mn-MN') : 'Мэдэгдэхгүй';

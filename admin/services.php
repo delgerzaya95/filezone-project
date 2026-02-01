@@ -1,6 +1,8 @@
 <?php
 session_start();
 require_once '../includes/db.php';
+// МЭЙЛ API ДУУДАХ
+require_once 'api/brevo_admin.php'; 
 
 // Админ эрх шалгах
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
@@ -18,7 +20,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['action']) && $_POST['action'] === 'get_details') {
         $id = intval($_POST['id']);
         try {
-            // Үйлчилгээний мэдээлэл + Ангилал + Хэрэглэгч
             $sql = "SELECT s.*, u.username, u.email, u.phone, u.avatar_url, sc.name as category_name
                     FROM services s
                     LEFT JOIN users u ON s.user_id = u.id
@@ -29,19 +30,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $service = $stmt->fetch(PDO::FETCH_ASSOC);
 
             if ($service) {
-                // Formatting
                 $service['price_min_fmt'] = number_format($service['price_min']) . '₮';
                 $service['price_max_fmt'] = $service['price_max'] ? number_format($service['price_max']) . '₮' : '-';
                 $service['created_at_fmt'] = date('Y-m-d H:i', strtotime($service['created_at']));
                 
-                // Avatar fix
                 if (empty($service['avatar_url']) || !file_exists('../' . $service['avatar_url'])) {
                     $service['avatar_url'] = 'https://ui-avatars.com/api/?name=' . urlencode($service['username']) . '&background=random&color=fff';
                 } else {
                     $service['avatar_url'] = '../' . $service['avatar_url'];
                 }
 
-                // Cover image fix
                 if (!empty($service['cover_image'])) {
                     $service['cover_image'] = '../' . $service['cover_image'];
                 }
@@ -56,18 +54,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
-    // 2. UPDATE STATUS (Approve/Reject/Delete)
+    // 2. UPDATE STATUS
     if (isset($_POST['action']) && $_POST['action'] === 'update_status') {
         $id = intval($_POST['id']);
         $status = $_POST['status'];
         $reason = isset($_POST['reason']) ? trim($_POST['reason']) : null;
 
         try {
-            // Багана 'rejection_reason' эсвэл 'reject_reason' байж магадгүй тул шалгах хэрэгтэй.
-            // Таны өмнөх код 'rejection_reason' ашиглаж байсан тул үүгээр явъя.
+            // Мэйл илгээхийн тулд мэдээлэл татах
+            $stmtInfo = $pdo->prepare("
+                SELECT s.title, s.user_id, s.status as old_status, u.email, u.username 
+                FROM services s 
+                JOIN users u ON s.user_id = u.id 
+                WHERE s.id = ?
+            ");
+            $stmtInfo->execute([$id]);
+            $serviceInfo = $stmtInfo->fetch(PDO::FETCH_ASSOC);
+
+            if (!$serviceInfo) {
+                echo json_encode(['success' => false, 'message' => 'Үйлчилгээ олдсонгүй.']);
+                exit;
+            }
+
+            // Update DB
             $sql = "UPDATE services SET status = ?, rejection_reason = ? WHERE id = ?";
             $stmt = $pdo->prepare($sql);
             $stmt->execute([$status, $reason, $id]);
+
+            // Email Notification
+            if ($status !== $serviceInfo['old_status']) {
+                if ($status === 'active') {
+                    notifyServiceApproved($serviceInfo['email'], $serviceInfo['username'], $serviceInfo['title'], $id);
+                } elseif ($status === 'rejected') {
+                    notifyServiceRejected($serviceInfo['email'], $serviceInfo['username'], $serviceInfo['title'], $reason);
+                }
+            }
 
             echo json_encode(['success' => true, 'message' => 'Төлөв амжилттай шинэчлэгдлээ.']);
         } catch (PDOException $e) {
@@ -78,38 +99,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // --------------------------------------------------------------------------
-// PAGE DATA FETCHING
+// PAGE DATA FETCHING & FILTERING
 // --------------------------------------------------------------------------
 
+// Filters
 $search = $_GET['search'] ?? '';
 $status_filter = $_GET['status'] ?? '';
 $category_filter = isset($_GET['category']) ? intval($_GET['category']) : 0;
+$date_from = $_GET['date_from'] ?? '';
+$date_to = $_GET['date_to'] ?? '';
 
+// Pagination
 $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
 $limit = 10;
 $offset = ($page - 1) * $limit;
 
+// Query Construction
 $where_clauses = ["1=1"];
 $params = [];
 
+// 1. Text Search
 if (!empty($search)) {
-    $where_clauses[] = "(s.title LIKE ? OR u.username LIKE ?)";
+    $where_clauses[] = "(s.title LIKE ? OR u.username LIKE ? OR u.email LIKE ?)";
+    $params[] = "%$search%";
     $params[] = "%$search%";
     $params[] = "%$search%";
 }
 
+// 2. Status Filter
 if (!empty($status_filter)) {
     $where_clauses[] = "s.status = ?";
     $params[] = $status_filter;
 }
 
+// 3. Category Filter
 if ($category_filter > 0) {
     $where_clauses[] = "s.category_id = ?";
     $params[] = $category_filter;
 }
 
+// 4. Date Range Filter
+if (!empty($date_from)) {
+    $where_clauses[] = "DATE(s.created_at) >= ?";
+    $params[] = $date_from;
+}
+if (!empty($date_to)) {
+    $where_clauses[] = "DATE(s.created_at) <= ?";
+    $params[] = $date_to;
+}
+
 $where_sql = implode(' AND ', $where_clauses);
 
+// Count Query
 $count_sql = "SELECT COUNT(*) FROM services s LEFT JOIN users u ON s.user_id = u.id WHERE $where_sql";
 $stmt = $pdo->prepare($count_sql);
 $stmt->execute($params);
@@ -147,10 +188,8 @@ $categories = $pdo->query("SELECT id, name FROM service_categories ORDER BY name
     <style>
         .modal { transition: opacity 0.25s ease; }
         body.modal-active { overflow-x: hidden; overflow-y: visible !important; }
-        /* TinyMCE content styling inside modal */
         .prose img { border-radius: 8px; max-width: 100%; }
         .prose ul { list-style-type: disc; padding-left: 20px; }
-        .prose ol { list-style-type: decimal; padding-left: 20px; }
     </style>
 </head>
 <body class="font-sans text-slate-800 antialiased bg-slate-50">
@@ -181,41 +220,70 @@ $categories = $pdo->query("SELECT id, name FROM service_categories ORDER BY name
             <!-- MAIN BODY -->
             <main class="flex-1 overflow-x-hidden overflow-y-auto p-6">
                 
-                <!-- Filters Bar -->
-                <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <form method="GET" class="flex flex-col md:flex-row gap-4 flex-1">
-                        <div class="relative flex-1 max-w-md">
-                            <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 text-sm"></i>
-                            <input type="text" name="search" value="<?php echo htmlspecialchars($search); ?>" placeholder="Үйлчилгээний нэр, хэрэглэгч..." class="pl-10 pr-4 py-2 w-full border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                        </div>
+                <!-- Expanded Filters Bar -->
+                <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 mb-6">
+                    <form method="GET" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                         
-                        <select name="status" class="border border-slate-300 rounded-lg text-sm px-3 py-2 bg-white text-slate-600">
-                            <option value="">Бүх төлөв</option>
-                            <option value="pending" <?php echo $status_filter == 'pending' ? 'selected' : ''; ?>>Хүлээгдэж буй</option>
-                            <option value="active" <?php echo $status_filter == 'active' ? 'selected' : ''; ?>>Идэвхтэй</option>
-                            <option value="rejected" <?php echo $status_filter == 'rejected' ? 'selected' : ''; ?>>Татгалзсан</option>
-                        </select>
+                        <!-- Search -->
+                        <div class="col-span-1 md:col-span-2">
+                            <label class="block text-xs font-semibold text-slate-500 mb-1 uppercase">Хайлт</label>
+                            <div class="relative">
+                                <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 text-sm"></i>
+                                <input type="text" name="search" value="<?php echo htmlspecialchars($search); ?>" placeholder="Үйлчилгээ, хэрэглэгчийн нэр, мэйл..." class="pl-10 pr-4 py-2 w-full border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                            </div>
+                        </div>
 
-                        <select name="category" class="border border-slate-300 rounded-lg text-sm px-3 py-2 bg-white text-slate-600">
-                            <option value="">Бүх ангилал</option>
-                            <?php foreach ($categories as $cat): ?>
-                                <option value="<?php echo $cat['id']; ?>" <?php echo $category_filter == $cat['id'] ? 'selected' : ''; ?>>
-                                    <?php echo htmlspecialchars($cat['name']); ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
+                        <!-- Status Filter -->
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-500 mb-1 uppercase">Төлөв</label>
+                            <select name="status" class="w-full border border-slate-300 rounded-lg text-sm px-3 py-2 bg-white text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                <option value="">Бүх төлөв</option>
+                                <option value="pending" <?php echo $status_filter == 'pending' ? 'selected' : ''; ?>>⏳ Хүлээгдэж буй</option>
+                                <option value="active" <?php echo $status_filter == 'active' ? 'selected' : ''; ?>>✅ Идэвхтэй</option>
+                                <option value="paused" <?php echo $status_filter == 'paused' ? 'selected' : ''; ?>>⏸ Түр зогссон</option>
+                                <option value="rejected" <?php echo $status_filter == 'rejected' ? 'selected' : ''; ?>>❌ Татгалзсан</option>
+                                <option value="deleted" <?php echo $status_filter == 'deleted' ? 'selected' : ''; ?>>🗑 Устгагдсан</option>
+                            </select>
+                        </div>
 
-                        <button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 transition">Шүүх</button>
+                        <!-- Category Filter -->
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-500 mb-1 uppercase">Ангилал</label>
+                            <select name="category" class="w-full border border-slate-300 rounded-lg text-sm px-3 py-2 bg-white text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                <option value="">Бүх ангилал</option>
+                                <?php foreach ($categories as $cat): ?>
+                                    <option value="<?php echo $cat['id']; ?>" <?php echo $category_filter == $cat['id'] ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($cat['name']); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+
+                        <!-- Date From -->
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-500 mb-1 uppercase">Эхлэх огноо</label>
+                            <input type="date" name="date_from" value="<?php echo htmlspecialchars($date_from); ?>" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-600">
+                        </div>
+
+                        <!-- Date To -->
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-500 mb-1 uppercase">Дуусах огноо</label>
+                            <input type="date" name="date_to" value="<?php echo htmlspecialchars($date_to); ?>" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-600">
+                        </div>
+
+                        <!-- Action Buttons -->
+                        <div class="col-span-1 md:col-span-2 flex items-end gap-2">
+                            <button type="submit" class="px-6 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 transition shadow-sm font-medium">
+                                <i class="fas fa-filter mr-1"></i> Шүүх
+                            </button>
+                            <a href="services.php" class="px-4 py-2 text-slate-600 bg-white border border-slate-300 rounded-lg text-sm hover:bg-slate-50 transition font-medium">
+                                <i class="fas fa-undo mr-1"></i> Цэвэрлэх
+                            </a>
+                            <a href="add_service.php" class="ml-auto px-4 py-2 text-white bg-green-600 hover:bg-green-700 border border-green-600 rounded-lg text-sm transition font-medium">
+                                <i class="fas fa-plus mr-1"></i> Нэмэх
+                            </a>
+                        </div>
                     </form>
-                    
-                    <div class="flex items-center gap-2">
-                        <a href="services.php" class="p-2 text-slate-500 hover:text-slate-700 border border-slate-300 rounded-lg bg-white" title="Шинэчлэх">
-                            <i class="fas fa-sync-alt"></i>
-                        </a>
-                        <a href="add_service.php" class="p-2 text-white bg-indigo-600 hover:bg-indigo-700 border border-indigo-600 rounded-lg" title="Нэмэх">
-                            <i class="fas fa-plus"></i>
-                        </a>
-                    </div>
                 </div>
 
                 <!-- Services Table -->
@@ -272,10 +340,12 @@ $categories = $pdo->query("SELECT id, name FROM service_categories ORDER BY name
                                                 <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 border border-green-200">Идэвхтэй</span>
                                             <?php elseif($service['status'] == 'pending'): ?>
                                                 <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 border border-yellow-200 animate-pulse">Хүлээгдэж буй</span>
+                                            <?php elseif($service['status'] == 'paused'): ?>
+                                                <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 border border-gray-200">Түр зогссон</span>
                                             <?php elseif($service['status'] == 'rejected'): ?>
                                                 <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 border border-red-200">Татгалзсан</span>
-                                            <?php else: ?>
-                                                <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 border border-gray-200"><?php echo ucfirst($service['status']); ?></span>
+                                            <?php elseif($service['status'] == 'deleted'): ?>
+                                                <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-200 text-slate-500 border border-slate-300">Устгагдсан</span>
                                             <?php endif; ?>
                                         </td>
                                         <td class="px-6 py-4 text-right">
@@ -293,11 +363,15 @@ $categories = $pdo->query("SELECT id, name FROM service_categories ORDER BY name
                     </div>
                 </div>
 
-                <!-- Pagination (Keeping it simple) -->
+                <!-- Pagination -->
                 <?php if ($total_pages > 1): ?>
                 <div class="mt-4 flex justify-end gap-2">
-                    <?php for($i = 1; $i <= $total_pages; $i++): ?>
-                        <a href="?page=<?php echo $i; ?>&search=<?php echo urlencode($search); ?>&status=<?php echo $status_filter; ?>" class="px-3 py-1 text-sm border rounded <?php echo $i == $page ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600'; ?>">
+                    <?php for($i = 1; $i <= $total_pages; $i++): 
+                        $query_params = $_GET;
+                        $query_params['page'] = $i;
+                        $link = '?' . http_build_query($query_params);
+                    ?>
+                        <a href="<?php echo $link; ?>" class="px-3 py-1 text-sm border rounded <?php echo $i == $page ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600'; ?>">
                             <?php echo $i; ?>
                         </a>
                     <?php endfor; ?>
@@ -364,7 +438,6 @@ $categories = $pdo->query("SELECT id, name FROM service_categories ORDER BY name
             document.getElementById('rejectInputArea').classList.add('hidden');
             document.getElementById('modalFooter').classList.remove('hidden');
 
-            // Fetch Details
             const formData = new FormData();
             formData.append('action', 'get_details');
             formData.append('id', id);
@@ -377,7 +450,9 @@ $categories = $pdo->query("SELECT id, name FROM service_categories ORDER BY name
                     let statusBadge = '';
                     if(d.status === 'pending') statusBadge = '<span class="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs">Хүлээгдэж буй</span>';
                     else if(d.status === 'active') statusBadge = '<span class="bg-green-100 text-green-800 px-2 py-1 rounded text-xs">Идэвхтэй</span>';
+                    else if(d.status === 'paused') statusBadge = '<span class="bg-gray-100 text-gray-600 px-2 py-1 rounded text-xs">Түр зогссон</span>';
                     else if(d.status === 'rejected') statusBadge = '<span class="bg-red-100 text-red-800 px-2 py-1 rounded text-xs">Татгалзсан</span>';
+                    else if(d.status === 'deleted') statusBadge = '<span class="bg-slate-200 text-slate-500 px-2 py-1 rounded text-xs">Устгагдсан</span>';
 
                     let coverHtml = d.cover_image ? `<img src="${d.cover_image}" class="w-full h-48 object-cover rounded-xl mb-4 border border-slate-200">` : '';
 
@@ -484,7 +559,6 @@ $categories = $pdo->query("SELECT id, name FROM service_categories ORDER BY name
             .catch(() => alert('Сүлжээний алдаа.'));
         }
 
-        // Close on overlay click
         document.querySelector('.modal-overlay').addEventListener('click', closeModal);
     </script>
 </body>

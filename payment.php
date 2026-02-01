@@ -12,6 +12,7 @@ if (!isset($_SESSION['user_id'])) {
 }
 
 $user_id = $_SESSION['user_id'];
+$COMMISSION_RATE = 0.10; // 10% Шимтгэл
 
 // ===================================================================
 //  AJAX HANDLERS (File Purchase Only)
@@ -68,7 +69,7 @@ if (isset($_GET['action'])) {
             try {
                 $pdo->beginTransaction();
 
-                // Давхар гүйлгээ шалгах
+                // Давхар гүйлгээ шалгах (Transaction аль хэдийн бүртгэгдсэн эсэх)
                 $stmt_check = $pdo->prepare("SELECT id FROM transactions WHERE user_id = ? AND file_id = ? AND type = 'file_purchase' AND status = 'success'");
                 $stmt_check->execute([$pending['user_id'], $pending['file_id']]);
                 
@@ -80,23 +81,54 @@ if (isset($_GET['action'])) {
                     exit;
                 }
 
-                // 1. Transaction бүртгэх
+                // 1. Transaction (System Log) бүртгэх
+                // Энэ бол системийн ерөнхий журнал
                 $txn_num = 'QPAY-' . date('Ymd') . '-' . rand(1000, 9999);
                 $stmt_trx = $pdo->prepare("INSERT INTO transactions (transaction_number, user_id, file_id, amount, payment_method, status, type, transaction_date) VALUES (?, ?, ?, ?, 'qpay', 'success', 'file_purchase', NOW())");
                 $stmt_trx->execute([$txn_num, $pending['user_id'], $pending['file_id'], $pending['price']]);
 
-                // 2. Pending Balance нэмэх
-                $stmt_add = $pdo->prepare("UPDATE users SET pending_balance = pending_balance + ? WHERE id = ?");
-                $stmt_add->execute([$pending['price'], $pending['owner_id']]);
+                // 2. Орлого хуваарилалт (Commission Calculation)
+                $price = $pending['price'];
+                $net_income = $price * (1 - $COMMISSION_RATE); // 90%
+                
+                // Seller Balance Update (users.balance руу ШУУД орно - Direct Deposit)
+                // QPay-ээр төлсөн тул Худалдан авагчийн балансаас хасахгүй, зөвхөн Худалдагчид нэмнэ.
+                $stmt_add = $pdo->prepare("UPDATE users SET balance = balance + ? WHERE id = ?");
+                $stmt_add->execute([$net_income, $pending['owner_id']]);
 
                 // 3. Таталтын тоог нэмэх
                 $stmt_dl = $pdo->prepare("UPDATE files SET download_count = download_count + 1 WHERE id = ?");
                 $stmt_dl->execute([$pending['file_id']]);
 
+                // 4. USER TRANSACTIONS (Давхар бичилт - Double Entry)
+                
+                // Файлын нэрийг авах
+                $stmt_fname = $pdo->prepare("SELECT title FROM files WHERE id = ?");
+                $stmt_fname->execute([$pending['file_id']]);
+                $file_title = $stmt_fname->fetchColumn();
+
+                // A. Buyer Record (Худалдан авалтын түүх)
+                // QPay-ээр төлсөн ч гэсэн хэрэглэгчийн түүхэнд "Худалдан авалт" гэж харагдах ёстой.
+                $ut_txn_buy = 'PUR-' . date('Ymd') . '-' . rand(1000, 9999);
+                $desc_buy = "Файл худалдан авалт (QPay): " . $file_title;
+                $stmt_ut_buy = $pdo->prepare("INSERT INTO user_transactions (transaction_number, user_id, type, amount, description, transaction_date, file_id) VALUES (?, ?, 'purchase', ?, ?, NOW(), ?)");
+                $stmt_ut_buy->execute([$ut_txn_buy, $pending['user_id'], $price, $desc_buy, $pending['file_id']]);
+
+                // B. Seller Record (Борлуулалтын түүх)
+                // Худалдагчийн түүхэнд "Орлого" гэж харагдана (шимтгэл хассан дүнгээр).
+                $ut_txn_sell = 'SALE-' . date('Ymd') . '-' . rand(1000, 9999);
+                $desc_sell = "Файл борлуулалт: " . $file_title;
+                $stmt_ut_sell = $pdo->prepare("INSERT INTO user_transactions (transaction_number, user_id, type, amount, description, transaction_date, file_id) VALUES (?, ?, 'sale', ?, ?, NOW(), ?)");
+                $stmt_ut_sell->execute([$ut_txn_sell, $pending['owner_id'], $net_income, $desc_sell, $pending['file_id']]);
+
                 $pdo->commit();
                 
                 // Мэдэгдэл илгээх
                 processFilePurchase($pdo, $pending['file_id'], $pending['user_id']);
+                // Худалдагчид мэдэгдэх
+                if ($pending['owner_id'] != $pending['user_id']) {
+                    sendNotification($pdo, $pending['owner_id'], 'sale', "Таны \"{$file_title}\" файлыг хэрэглэгч худалдаж авлаа. +".number_format($net_income)."₮", "profile/my_files.php");
+                }
                 
                 unset($_SESSION['pending_file_purchase']);
                 echo json_encode(['success' => true, 'message' => 'Payment successful.']);
@@ -113,11 +145,11 @@ if (isset($_GET['action'])) {
         exit;
     }
 
-    // --- ACTION 3: Balance Payment ---
+    // --- ACTION 3: Balance Payment (Хэтэвчээр төлөх) ---
     if ($_GET['action'] == 'pay_balance' && isset($_POST['file_id'])) {
         $file_id_ajax = intval($_POST['file_id']);
         
-        // User Balance
+        // User Balance Check
         $stmt_bal = $pdo->prepare("SELECT balance FROM users WHERE id = ?");
         $stmt_bal->execute([$user_id]);
         $current_balance = $stmt_bal->fetchColumn();
@@ -133,6 +165,7 @@ if (isset($_GET['action'])) {
         }
 
         $amount = $file_data['price'];
+        $owner_id = $file_data['user_id'];
 
         if ($current_balance >= $amount) {
             try {
@@ -148,22 +181,44 @@ if (isset($_GET['action'])) {
                     exit;
                 }
 
-                // 2. Deduct & Add
-                $pdo->prepare("UPDATE users SET balance = balance - ? WHERE id = ?")->execute([$amount, $user_id]);
-                $pdo->prepare("UPDATE users SET pending_balance = pending_balance + ? WHERE id = ?")->execute([$amount, $file_data['user_id']]);
+                // 2. Commission Calculation
+                $net_income = $amount * (1 - $COMMISSION_RATE);
 
-                // 3. Transaction
+                // 3. Money Transfer (Balance -> Balance directly)
+                // A. Buyer: Reduce Balance (Зарлага)
+                $pdo->prepare("UPDATE users SET balance = balance - ? WHERE id = ?")->execute([$amount, $user_id]);
+                // B. Seller: Increase Balance (Орлого - Direct Deposit)
+                $pdo->prepare("UPDATE users SET balance = balance + ? WHERE id = ?")->execute([$net_income, $owner_id]);
+
+                // 4. Transaction (System Log)
                 $txn_num = 'BAL-' . date('Ymd') . '-' . rand(1000, 9999);
                 $stmt_trx = $pdo->prepare("INSERT INTO transactions (transaction_number, user_id, file_id, amount, payment_method, status, type, transaction_date) VALUES (?, ?, ?, ?, 'balance', 'success', 'file_purchase', NOW())");
                 $stmt_trx->execute([$txn_num, $user_id, $file_id_ajax, $amount]);
                 
-                // 4. Update Download Count
+                // 5. Update Download Count
                 $pdo->prepare("UPDATE files SET download_count = download_count + 1 WHERE id = ?")->execute([$file_id_ajax]);
                 
+                // 6. USER TRANSACTIONS (Давхар бичилт - Double Entry)
+                
+                // A. Buyer Record (Зарлага)
+                $ut_txn_buy = 'PUR-' . date('Ymd') . '-' . rand(1000, 9999);
+                $desc_buy = "Файл худалдан авалт: " . $file_data['title'];
+                $stmt_ut_buy = $pdo->prepare("INSERT INTO user_transactions (transaction_number, user_id, type, amount, description, transaction_date, file_id) VALUES (?, ?, 'purchase', ?, ?, NOW(), ?)");
+                $stmt_ut_buy->execute([$ut_txn_buy, $user_id, $amount, $desc_buy, $file_id_ajax]);
+
+                // B. Seller Record (Орлого)
+                $ut_txn_sell = 'SALE-' . date('Ymd') . '-' . rand(1000, 9999);
+                $desc_sell = "Файл борлуулалт: " . $file_data['title'];
+                $stmt_ut_sell = $pdo->prepare("INSERT INTO user_transactions (transaction_number, user_id, type, amount, description, transaction_date, file_id) VALUES (?, ?, 'sale', ?, ?, NOW(), ?)");
+                $stmt_ut_sell->execute([$ut_txn_sell, $owner_id, $net_income, $desc_sell, $file_id_ajax]);
+
                 $pdo->commit();
                 
                 // Мэдэгдэл
                 processFilePurchase($pdo, $file_id_ajax, $user_id);
+                if ($owner_id != $user_id) {
+                    sendNotification($pdo, $owner_id, 'sale', "Таны \"{$file_data['title']}\" файлыг хэрэглэгч худалдаж авлаа. +".number_format($net_income)."₮", "profile/my_files.php");
+                }
                 
                 echo json_encode(['success' => true]);
 

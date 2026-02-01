@@ -94,3 +94,93 @@ From: delgerzaya95@gmail.com
 Response: {"messageId":"<202601130839.96757700238@smtp-relay.mailin.fr>"}
 
 -----------------------------------
+EMAIL - DT: 2026-01-15 20:06:21
+To: giamia999@gmail.com
+Subject: Шинэ захиалга: Бизнес төлөвлөгөө боловсруулах - Filezone.mn
+Response: {"messageId":"<202601151206.51591570780@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+EMAIL - DT: 2026-01-15 20:14:06
+To: giamia999@gmail.com
+Subject: Шинэ захиалга: Бизнес төлөвлөгөө боловсруулах - Filezone.mn
+Response: {"messageId":"<202601151214.35535777143@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+EMAIL - DT: 2026-01-15 20:48:43
+To: giamia999@gmail.com
+Subject: Танд шинэ мэдэгдэл байна - Filezone.mn
+Response: {"messageId":"<202601151248.64826677987@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+EMAIL - DT: 2026-01-20 17:59:42
+To: zoljargala50@gmail.com
+Subject: Таны файл зөвшөөрөгдлөө! - Filezone.mn
+Response: {"messageId":"<202601200959.81974191967@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+EMAIL - DT: 2026-01-21 16:40:50
+To: giamia999@gmail.com
+Subject: Шинэ захиалга: Бизнес төлөвлөгөө боловсруулах - Filezone.mn
+Response: {"messageId":"<202601210840.94637440294@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+EMAIL - DT: 2026-01-26 15:55:40
+To: test@gmail.com
+Subject: Шинэ захиалга: Англи-Монгол мэргэжлийн орчуулга (1 хуудас) - Filezone.mn
+Response: {"messageId":"<202601260755.32304385980@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+EMAIL - DT: 2026-01-26 17:25:23
+To: giamia999@gmail.com
+Subject: Шинэ маргаан үүслээ: Захиалга #19 - Filezone Admin
+Response: {"messageId":"<202601260925.66619541530@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+EMAIL - DT: 2026-01-26 17:57:00
+To: test@gmail.com
+Subject: Шинэ захиалга: Англи-Монгол мэргэжлийн орчуулга (1 хуудас) - Filezone.mn
+Response: {"messageId":"<202601260956.33832887600@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+EMAIL - DT: 2026-01-26 18:01:44
+To: giamia999@gmail.com
+Subject: Шинэ захиалга: Бизнес төлөвлөгөө боловсруулах - Filezone.mn
+Response: {"messageId":"<202601261001.46989842835@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+EMAIL - DT: 2026-01-26 18:21:54
+To: giamia999@gmail.com
+Subject: Шинэ захиалга: Бизнес төлөвлөгөө боловсруулах - Filezone.mn
+Response: {"messageId":"<202601261021.54663639496@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+EMAIL - DT: 2026-01-26 18:38:27
+To: delgerzaya95@gmail.com
+Subject: Таны захиалга ажилдаа орлоо! - Filezone.mn
+Response: {"messageId":"<202601261038.68409638550@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+CONTACT FORM - DT: 2026-01-27 09:54:54
+To: delgerzaya95@gmail.com
+From: badamaa1212@gmail.com
+Response: {"messageId":"<202601270154.76567428996@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+EMAIL - DT: 2026-01-27 18:45:02
+To: delgerzaya95@gmail.com
+Subject: Filezone сайт хариу
+Response: {"messageId":"<202601271045.69989574300@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+EMAIL - DT: 2026-01-27 18:55:16
+To: delgerzaya95@gmail.com
+Subject: Таны илгээсэн мэйлийн хариу
+Response: {"messageId":"<202601271055.46564200035@smtp-relay.mailin.fr>"}
+
+-----------------------------------
+EMAIL - DT: 2026-01-27 18:57:17
+To: badamaa1212@gmail.com
+Subject: Таны илгээсэн мэйлийн хариу
+Response: {"messageId":"<202601271057.27490021081@smtp-relay.mailin.fr>"}
+
+-----------------------------------

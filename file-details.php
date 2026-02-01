@@ -374,7 +374,7 @@ include 'includes/header.php';
                             <h4 class="font-bold text-gray-900 text-sm"><?php echo htmlspecialchars($file['username']); ?></h4>
                             <p class="text-xs text-gray-500 mb-1 capitalize"><?php echo htmlspecialchars($file['level']); ?> Seller</p>
                         </div>
-                        <a href="user-profile.php?id=<?php echo $file['user_id']; ?>" class="text-brand-600 hover:bg-brand-50 p-2 rounded-lg transition">
+                        <a href="user_profile.php?id=<?php echo $file['user_id']; ?>" class="text-brand-600 hover:bg-brand-50 p-2 rounded-lg transition">
                             <i class="fas fa-chevron-right"></i>
                         </a>
                     </div>

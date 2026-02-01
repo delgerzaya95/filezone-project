@@ -89,8 +89,8 @@ function getFileIcon($type) {
 
 function getStatusBadge($status) {
     switch($status) {
-        case 'approved': return '<span class="px-2 py-1 text-[10px] font-bold uppercase bg-green-100 text-green-700 rounded-full">Зөвшөөрсөн</span>';
-        case 'rejected': return '<span class="px-2 py-1 text-[10px] font-bold uppercase bg-red-100 text-red-700 rounded-full">Татгалзсан</span>';
+        case 'approved': return '<span class="px-2 py-1 text-[10px] font-bold uppercase bg-green-100 text-green-700 rounded-full">Нийтлэгдсэн</span>';
+        case 'rejected': return '<span class="px-2 py-1 text-[10px] font-bold uppercase bg-red-100 text-red-700 rounded-full">Нийтлэхээс татгалзсан</span>';
         default: return '<span class="px-2 py-1 text-[10px] font-bold uppercase bg-yellow-100 text-yellow-700 rounded-full">Хүлээгдэж буй</span>';
     }
 }
